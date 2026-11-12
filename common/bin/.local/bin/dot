@@ -141,7 +141,7 @@ cmd_save() {
 cmd_pull() {
   git -C "$DOT" pull --rebase --autostash
   cmd_link
-  say "reload: Hyprland reloads itself; restart the shell with: pkill qs; hyprctl dispatch 'hl.dsp.exec_cmd(\"qs\")'"
+  say "Hyprland reloads by itself; restart the shell with: pkill -x quickshell; pkill -x qs; hyprctl dispatch 'hl.dsp.exec_cmd(\"qs\")'"
 }
 
 pkglist() { grep -v -E '^\s*(#|$)' "$1" 2>/dev/null | awk '{print $1}' || true; }
