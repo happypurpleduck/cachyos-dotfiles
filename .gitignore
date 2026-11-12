@@ -1,0 +1,21 @@
+# Written by mocha-theme on every wallpaper/accent change (into linked directories)
+common/kitty/.config/kitty/mocha-theme.conf
+common/hokum/.config/hokum/themes/
+common/nvim/.config/nvim/lua/config/mocha-accent.lua
+common/mpv/.config/mpv/script-opts/uosc.conf
+common/hypr/.config/hypr/mocha-theme.lua
+
+# Downloaded by scripts/fetch-assets
+common/mpv/.config/mpv/scripts/
+common/mpv/.config/mpv/shaders/
+common/mpv/.config/mpv/fonts/
+
+# App state that can land in linked directories
+common/mpv/.config/mpv/watch_later/
+common/micro/.config/micro/backups/
+common/micro/.config/micro/buffers/
+common/nvim/.config/nvim/lazy-lock.json.bak
+**/obs-studio/**/service.json
+**/obs-studio/**/*.bak
+*.bak
+*~

@@ -1,0 +1,165 @@
+#!/usr/bin/env -S python3 -I
+"""Mocha Bluetooth pairing agent (BlueZ org.bluez.Agent1) for the Quickshell shell.
+
+The shell runs this as a child process. BlueZ requests are written to stdout as
+one JSON object per line; the shell answers on stdin:
+
+  → {"id": 3, "type": "confirm", "device": "WH-1000XM5", "passkey": "123456"}
+  ← 3 ok              (accept / confirm)
+  ← 3 ok 0000         (reply with a PIN or passkey)
+  ← 3 cancel          (reject)
+
+types: pin (enter a PIN) · passkey (enter a 6-digit number) · confirm (do the numbers
+match?) · authorize (allow this device to pair?) · display (show a code to type on the
+device; no answer needed) · cancel (BlueZ gave up; close the prompt) · ready / error.
+
+Services of already-paired devices are authorised automatically. Only uses PyGObject
+(Gio D-Bus), which is already installed.
+"""
+import json
+import os
+import sys
+
+import gi
+
+gi.require_version("Gio", "2.0")
+from gi.repository import Gio, GLib  # noqa: E402
+
+AGENT_PATH = "/org/mocha/btagent"
+CAPABILITY = "KeyboardDisplay"
+XML = """
+<node>
+  <interface name="org.bluez.Agent1">
+    <method name="Release"/>
+    <method name="RequestPinCode"><arg type="o" direction="in"/><arg type="s" direction="out"/></method>
+    <method name="DisplayPinCode"><arg type="o" direction="in"/><arg type="s" direction="in"/></method>
+    <method name="RequestPasskey"><arg type="o" direction="in"/><arg type="u" direction="out"/></method>
+    <method name="DisplayPasskey"><arg type="o" direction="in"/><arg type="u" direction="in"/><arg type="q" direction="in"/></method>
+    <method name="RequestConfirmation"><arg type="o" direction="in"/><arg type="u" direction="in"/></method>
+    <method name="RequestAuthorization"><arg type="o" direction="in"/></method>
+    <method name="AuthorizeService"><arg type="o" direction="in"/><arg type="s" direction="in"/></method>
+    <method name="Cancel"/>
+  </interface>
+</node>
+"""
+
+# BT_AGENT_TEST=1 runs on the session bus so the request/answer flow can be tested
+# without BlueZ (only bluetoothd may call an agent on the system bus).
+bus = Gio.bus_get_sync(Gio.BusType.SESSION if os.environ.get("BT_AGENT_TEST") else Gio.BusType.SYSTEM, None)
+pending = {}          # id -> (invocation, kind)
+next_id = 0
+
+
+def emit(obj):
+    sys.stdout.write(json.dumps(obj) + "\n")
+    sys.stdout.flush()
+
+
+def device_prop(path, prop):
+    try:
+        v = bus.call_sync("org.bluez", path, "org.freedesktop.DBus.Properties", "Get",
+                          GLib.Variant("(ss)", ("org.bluez.Device1", prop)),
+                          GLib.VariantType("(v)"), Gio.DBusCallFlags.NONE, 2000, None)
+        return v.unpack()[0]
+    except GLib.Error:
+        return None
+
+
+def device_name(path):
+    return device_prop(path, "Alias") or device_prop(path, "Name") or path.rsplit("/", 1)[-1][4:].replace("_", ":")
+
+
+def reject(inv, msg="Rejected"):
+    inv.return_dbus_error("org.bluez.Error.Rejected", msg)
+
+
+def ask(inv, kind, path, **extra):
+    global next_id
+    next_id += 1
+    pending[next_id] = (inv, kind)
+    emit({"id": next_id, "type": kind, "device": device_name(path), "path": path, **extra})
+
+
+def on_call(conn, sender, path, iface, method, params, inv):
+    args = params.unpack()
+    if method == "Release":
+        inv.return_value(None)
+    elif method == "RequestPinCode":
+        ask(inv, "pin", args[0])
+    elif method == "RequestPasskey":
+        ask(inv, "passkey", args[0])
+    elif method == "RequestConfirmation":
+        ask(inv, "confirm", args[0], passkey=f"{args[1]:06d}")
+    elif method == "RequestAuthorization":
+        ask(inv, "authorize", args[0])
+    elif method == "DisplayPinCode":
+        emit({"id": 0, "type": "display", "device": device_name(args[0]), "path": args[0], "code": args[1]})
+        inv.return_value(None)
+    elif method == "DisplayPasskey":
+        emit({"id": 0, "type": "display", "device": device_name(args[0]), "path": args[0], "code": f"{args[1]:06d}", "entered": args[2]})
+        inv.return_value(None)
+    elif method == "AuthorizeService":
+        # a paired device asking to use a profile (audio, input…): allow
+        if device_prop(args[0], "Paired"):
+            inv.return_value(None)
+        else:
+            ask(inv, "authorize", args[0])
+    elif method == "Cancel":
+        for i in list(pending):
+            reject(pending.pop(i)[0], "Canceled")
+        emit({"id": 0, "type": "cancel"})
+        inv.return_value(None)
+    else:
+        inv.return_dbus_error("org.bluez.Error.Rejected", "Unknown method")
+
+
+def on_stdin(channel, cond):
+    if cond & (GLib.IO_HUP | GLib.IO_ERR):
+        loop.quit()
+        return False
+    line = channel.readline()
+    if not line:
+        loop.quit()
+        return False
+    parts = line.strip().split()
+    if len(parts) < 2 or not parts[0].isdigit():
+        return True
+    entry = pending.pop(int(parts[0]), None)
+    if not entry:
+        return True
+    inv, kind = entry
+    if parts[1] != "ok":
+        reject(inv)
+    elif kind == "pin":
+        inv.return_value(GLib.Variant("(s)", (parts[2] if len(parts) > 2 else "0000",)))
+    elif kind == "passkey":
+        try:
+            inv.return_value(GLib.Variant("(u)", (int(parts[2]),)))
+        except (IndexError, ValueError):
+            reject(inv)
+    else:
+        inv.return_value(None)
+    return True
+
+
+def register():
+    try:
+        mgr = Gio.DBusProxy.new_sync(bus, Gio.DBusProxyFlags.NONE, None, "org.bluez", "/org/bluez",
+                                     "org.bluez.AgentManager1", None)
+        mgr.call_sync("RegisterAgent", GLib.Variant("(os)", (AGENT_PATH, CAPABILITY)), Gio.DBusCallFlags.NONE, 3000, None)
+        mgr.call_sync("RequestDefaultAgent", GLib.Variant("(o)", (AGENT_PATH,)), Gio.DBusCallFlags.NONE, 3000, None)
+        emit({"id": 0, "type": "ready"})
+    except GLib.Error as e:
+        emit({"id": 0, "type": "error", "message": e.message})
+    return False
+
+
+node = Gio.DBusNodeInfo.new_for_xml(XML)
+bus.register_object(AGENT_PATH, node.interfaces[0], on_call, None, None)
+# (re-)register whenever bluetoothd (re)appears
+Gio.bus_watch_name_on_connection(bus, "org.bluez", Gio.BusNameWatcherFlags.NONE,
+                                 lambda *a: register(), None)
+ch = GLib.IOChannel.unix_new(sys.stdin.fileno())
+GLib.io_add_watch(ch, GLib.PRIORITY_DEFAULT, GLib.IO_IN | GLib.IO_HUP | GLib.IO_ERR, on_stdin)
+loop = GLib.MainLoop()
+loop.run()

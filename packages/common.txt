@@ -1,0 +1,81 @@
+# Official-repo packages every machine gets (CachyOS repos). One per line; # comments ok.
+# Machine-specific packages go in hosts/<hostname>/packages.txt (`dot packages` snapshots them).
+
+# compositor + shell
+hyprland
+xdg-desktop-portal-hyprland
+xdg-desktop-portal-gtk
+quickshell
+greetd
+cage
+hyprpicker
+hyprsunset
+awww
+waypaper
+fuzzel
+
+# clipboard, capture, media keys
+wl-clipboard
+cliphist
+wl-clip-persist
+grim
+slurp
+satty
+gpu-screen-recorder
+playerctl
+brightnessctl
+ddcutil
+libqalculate
+jq
+python-gobject
+
+# look
+inter-font
+ttf-jetbrains-mono-nerd
+ttf-material-symbols-variable
+ttf-ibm-plex
+noto-fonts
+noto-fonts-cjk
+noto-fonts-emoji
+adw-gtk-theme
+qt5ct
+qt6ct
+qt6-wayland
+papirus-icon-theme
+
+# audio + bluetooth
+pipewire-pulse
+wireplumber
+pavucontrol
+noise-suppression-for-voice
+bluez
+bluez-utils
+
+# desktop apps
+kitty
+nautilus
+gvfs
+gvfs-mtp
+ffmpegthumbnailer
+gnome-keyring
+mpv
+mpv-mpris
+yt-dlp
+btop
+discord
+fuse2
+
+# terminal + dev
+zsh
+cachyos-zsh-config
+oh-my-zsh-git
+zsh-theme-powerlevel10k
+fzf
+zoxide
+ripgrep
+lazygit
+neovim
+micro
+git
+stow
+unzip

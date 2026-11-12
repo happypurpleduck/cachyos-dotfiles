@@ -1,0 +1,10 @@
+{
+  "audio": {
+    "labels": [
+      { "match": "KTMicro_CDSP", "sink": "Moondrop Chu 2 (CDSP)", "source": "Chu 2 cable mic" },
+      { "match": "^alsa_(output|input)\\.pci-(?!.*hdmi)", "sink": "Motherboard line out", "source": "Motherboard line in" }
+    ],
+    "autoeq": { "file": "~/.config/pipewire/autoeq/moondrop-chu-2.txt", "device": "CDSP" },
+    "micDenoise": { "source": "alsa_input.usb-DCMT_Technology_USB_Condenser_Microphone_214b206000000178-00.mono-fallback" }
+  }
+}

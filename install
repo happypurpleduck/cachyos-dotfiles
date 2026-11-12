@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Bootstrap a CachyOS machine from this repo:
+#     git clone git@github.com:happypurpleduck/cachyos-dotfiles.git ~/cachyos-dotfiles
+#     ~/cachyos-dotfiles/install
+# After this, use `dot` (linked into ~/.local/bin): dot help
+set -euo pipefail
+cd "$(dirname "$(realpath "$0")")"
+[ "$(realpath .)" = "$(realpath ~/cachyos-dotfiles)" ] || export DOTFILES=$PWD
+command -v stow >/dev/null || sudo pacman -S --needed stow
+exec ./common/bin/.local/bin/dot install

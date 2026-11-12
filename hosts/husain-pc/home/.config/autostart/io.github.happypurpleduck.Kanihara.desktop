@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Kanihara
+Comment=Anime tracker for AniList
+Exec="/home/husain/.t3/projects/kanihara/target/release/kanihara"
+Terminal=false
+X-GNOME-Autostart-enabled=true

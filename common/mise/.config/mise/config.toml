@@ -1,0 +1,6 @@
+[tools]
+claude = { version = "latest", minimum_release_age = "8h" }
+codex = { version = "latest", minimum_release_age = "8h" }
+gh = "latest"
+opencode = { version = "latest", minimum_release_age = "8h", allow_builds = ["@opencode/cli"] }
+rust = "stable"

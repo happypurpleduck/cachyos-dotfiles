@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# capture — screenshots and colour picking for the Mocha shell.
+#   capture region | window | screen [monitor] | color
+# region: click a window to capture it, drag to capture a region,
+#         click the empty desktop to capture the whole screen.
+# Screenshots go to ~/Pictures/Screenshots and the clipboard; the notification
+# offers "Edit" (satty) when available.
+set -u
+dir="$HOME/Pictures/Screenshots"
+mkdir -p "$dir"
+file="$dir/screenshot_$(date +%Y-%m-%d_%H-%M-%S).png"
+
+notify_shot() {
+  [ -s "$file" ] || exit 1
+  wl-copy --type image/png < "$file"
+  (
+    if command -v satty >/dev/null; then
+      act=$(notify-send -a "Screenshot" -i "$file" -A edit=Edit -A open=Folder "Screenshot copied" "${file/#$HOME/~}")
+    else
+      act=$(notify-send -a "Screenshot" -i "$file" -A open=Folder "Screenshot copied" "${file/#$HOME/~}")
+    fi
+    case "$act" in
+      edit) satty --filename "$file" --output-filename "$file" --copy-command wl-copy --early-exit ;;
+      open) xdg-open "$dir" ;;
+    esac
+  ) >/dev/null 2>&1 &
+}
+
+case "${1:-region}" in
+  region)
+    accent=$(jq -r '.accentHex // "#cba6f7"' "$HOME/.local/state/mocha-shell/theme.json" 2>/dev/null)
+    # visible windows on each monitor's active workspace, as slurp boxes
+    boxes=$(hyprctl -j monitors | jq -r '[.[].activeWorkspace.id] | @json' | {
+      read -r ws
+      hyprctl -j clients | jq -r --argjson ws "$ws" \
+        '.[] | select(.mapped and (.hidden | not) and (.workspace.id as $w | $ws | index($w)))
+             | "\(.at[0]),\(.at[1]) \(.size[0])x\(.size[1])"'
+    })
+    geo=$(printf '%s\n' "$boxes" | slurp -o -d -b '#11111b66' -c "${accent}ff" -B "${accent}22" -s '#00000000' -w 2) || exit 0
+    grim -g "$geo" "$file" && notify_shot ;;
+  window)
+    geo=$(hyprctl activewindow -j | jq -r 'select(.at) | "\(.at[0]),\(.at[1]) \(.size[0])x\(.size[1])"')
+    [ -n "$geo" ] || exit 1
+    grim -g "$geo" "$file" && notify_shot ;;
+  screen)
+    mon=${2:-$(hyprctl monitors -j | jq -r '.[] | select(.focused) | .name')}
+    grim -o "$mon" "$file" && notify_shot ;;
+  color)
+    hex=$(hyprpicker -a -f hex 2>/dev/null) || exit 0
+    [ -n "$hex" ] && notify-send -a "Colour picker" "Copied $hex" "Colour value is on the clipboard" ;;
+  *) echo "usage: capture region|window|screen [monitor]|color" >&2; exit 2 ;;
+esac

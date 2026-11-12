@@ -1,0 +1,2 @@
+# husain-pc — AUR packages beyond packages/aur.txt (snapshot 2026-11-12).
+google-chrome

@@ -1,0 +1,17 @@
+# One PipeWire filter process per audio effect, so each can be switched on/off
+# independently from the Mocha shell (scripts/audiofx):
+#   mocha-filter@mocha-autoeq  — Chu 2 AutoEq      (~/.config/pipewire/mocha-autoeq.conf[.d])
+#   mocha-filter@mocha-micnc   — mic noise suppression (~/.config/pipewire/mocha-micnc.conf[.d])
+[Unit]
+Description=Mocha audio filter (%i)
+After=pipewire.service wireplumber.service
+BindsTo=pipewire.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/pipewire -c %i.conf
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=pipewire.service

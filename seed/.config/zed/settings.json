@@ -1,0 +1,45 @@
+{
+  "theme": {
+    "mode": "dark",
+    "light": "Catppuccin Latte",
+    "dark": "Catppuccin Mocha"
+  },
+  "icon_theme": "Catppuccin Mocha",
+  "auto_install_extensions": {
+    "catppuccin": true,
+    "catppuccin-icons": true
+  },
+  "ui_font_family": "Inter",
+  "ui_font_size": 15,
+  "buffer_font_family": "JetBrainsMono Nerd Font",
+  "buffer_font_size": 14,
+  "buffer_line_height": "comfortable",
+  "terminal": {
+    "font_family": "JetBrainsMono Nerd Font",
+    "shell": "system"
+  },
+  "cursor_blink": false,
+  "relative_line_numbers": false,
+  "tab_size": 2,
+  "format_on_save": "on",
+  "auto_update": true,
+  "telemetry": {
+    "diagnostics": false,
+    "metrics": false
+  },
+  "experimental.theme_overrides": {
+    "border.focused": "#cba6f7",
+    "border.selected": "#cba6f7",
+    "text.accent": "#cba6f7",
+    "icon.accent": "#cba6f7",
+    "players": [
+      {
+        "cursor": "#cba6f7",
+        "selection": "#cba6f740",
+        "background": "#cba6f7"
+      }
+    ],
+    "editor.active_line_number": "#cba6f7",
+    "scrollbar.thumb.hover_background": "#cba6f760"
+  }
+}

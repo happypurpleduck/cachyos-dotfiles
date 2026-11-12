@@ -1,0 +1,2 @@
+# AUR packages every machine gets — last resort, only when there's no repo/official build.
+hokum-bin

@@ -1,0 +1,837 @@
+#!/usr/bin/env python3
+"""mocha-theme — wallpaper-driven Catppuccin Mocha accent engine.
+
+Picks the dominant colour of a wallpaper, snaps it to the nearest of the 14
+Catppuccin Mocha accents, stores it in ~/.local/state/mocha-shell/theme.json and
+re-renders every themed app (Hyprland, kitty, Hokum, GTK, Qt, fuzzel).
+Quickshell watches theme.json and recolours itself live.
+
+  mocha-theme set <image> [--no-wallpaper]   set wallpaper (+ auto accent)
+  mocha-theme accent <name|auto>             force an accent / back to auto
+  mocha-theme random                         random wallpaper from the folder
+  mocha-theme restore                        login: re-set wallpaper, re-apply
+  mocha-theme apply                          re-render all app themes
+  mocha-theme detect <image>                 print the accent for an image
+  mocha-theme get                            print current state JSON
+  mocha-theme thumbs                         build wallpaper thumbnails (picker)
+"""
+import json, math, os, random, shutil, subprocess, sys, time
+from pathlib import Path
+
+HOME = Path.home()
+STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", HOME / ".local/state")) / "mocha-shell"
+STATE = STATE_DIR / "theme.json"
+CFG = Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config"))
+WALL_DIR = HOME / "Pictures/Wallpapers/catppuccin-mocha"
+IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
+
+MOCHA = {
+    "rosewater": "#f5e0dc", "flamingo": "#f2cdcd", "pink": "#f5c2e7", "mauve": "#cba6f7",
+    "red": "#f38ba8", "maroon": "#eba0ac", "peach": "#fab387", "yellow": "#f9e2af",
+    "green": "#a6e3a1", "teal": "#94e2d5", "sky": "#89dceb", "sapphire": "#74c7ec",
+    "blue": "#89b4fa", "lavender": "#b4befe",
+    "text": "#cdd6f4", "subtext1": "#bac2de", "subtext0": "#a6adc8",
+    "overlay2": "#9399b2", "overlay1": "#7f849c", "overlay0": "#6c7086",
+    "surface2": "#585b70", "surface1": "#45475a", "surface0": "#313244",
+    "base": "#1e1e2e", "mantle": "#181825", "crust": "#11111b",
+}
+ACCENTS = ["rosewater", "flamingo", "pink", "mauve", "red", "maroon", "peach",
+           "yellow", "green", "teal", "sky", "sapphire", "blue", "lavender"]
+DEFAULT_ACCENT = "mauve"
+
+
+# ---------------------------------------------------------------- colour maths
+def hex_rgb(h):
+    h = h.lstrip("#")
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def _lin(c):
+    c /= 255.0
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def oklab(rgb):
+    r, g, b = (_lin(c) for c in rgb)
+    l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b
+    m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b
+    s = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b
+    l, m, s = (math.copysign(abs(x) ** (1 / 3), x) for x in (l, m, s))
+    return (0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+            1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+            0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s)
+
+
+ACCENT_LAB = {n: oklab(hex_rgb(MOCHA[n])) for n in ACCENTS}
+# Mocha's neutral ramp is tinted blue; pixels near it are "background", not accent.
+NEUTRAL_LAB = sorted(oklab(hex_rgb(MOCHA[n])) for n in
+                     ("crust", "mantle", "base", "surface0", "surface1", "surface2", "overlay0",
+                      "overlay1", "overlay2", "subtext0", "subtext1", "text"))
+
+
+def neutral_ab(L):
+    """Interpolated (a, b) tint of the Mocha neutral ramp at lightness L."""
+    if L <= NEUTRAL_LAB[0][0]:
+        return NEUTRAL_LAB[0][1:]
+    for (L0, a0, b0), (L1, a1, b1) in zip(NEUTRAL_LAB, NEUTRAL_LAB[1:]):
+        if L <= L1:
+            t = (L - L0) / (L1 - L0)
+            return a0 + t * (a1 - a0), b0 + t * (b1 - b0)
+    return NEUTRAL_LAB[-1][1:]
+
+
+def detect_accent(path):
+    """Vote each chromatic pixel towards its nearest accent (hue-weighted)."""
+    from PIL import Image
+    try:
+        img = Image.open(path)
+        img.seek(0)
+        img = img.convert("RGB")
+    except Exception as e:
+        print(f"mocha-theme: cannot read {path}: {e}", file=sys.stderr)
+        return DEFAULT_ACCENT
+    img.thumbnail((160, 160))
+    votes = dict.fromkeys(ACCENTS, 0.0)
+    cache = {}
+    pixels = img.get_flattened_data() if hasattr(img, "get_flattened_data") else img.getdata()
+    for (r, g, b) in pixels:
+        key = (r >> 2, g >> 2, b >> 2)
+        hit = cache.get(key)
+        if hit is None:
+            L, a, bb = oklab((r, g, b))
+            C = math.hypot(a, bb)
+            na, nb = neutral_ab(L)
+            E = math.hypot(a - na, bb - nb)   # chroma beyond Mocha's blue-grey tint
+            if E < 0.03 or L < 0.2:           # neutrals and near-black don't vote
+                cache[key] = hit = ("", 0.0)
+            else:
+                # compare hue direction primarily; lightness matters less because
+                # Mocha accents are all pastel while wallpaper pixels vary
+                best, bd = "", 1e9
+                for n, (AL, Aa, Ab) in ACCENT_LAB.items():
+                    AC = math.hypot(Aa, Ab)
+                    # scale pixel chroma to the accent's chroma, then measure
+                    k = AC / C
+                    d = math.hypot(a * k - Aa, bb * k - Ab) + 0.25 * abs(L - AL) + 0.35 * abs(C - AC)
+                    if d < bd:
+                        best, bd = n, d
+                # vivid colours dominate: weight grows with the square of excess chroma
+                w = min(E, 0.2) ** 2 * 50 * (0.6 + 0.4 * min(L / 0.6, 1.0))
+                cache[key] = hit = (best, w)
+        if hit[0]:
+            votes[hit[0]] += hit[1]
+    total = sum(votes.values())
+    if os.environ.get("MOCHA_DEBUG"):
+        print({k: round(v, 1) for k, v in sorted(votes.items(), key=lambda kv: -kv[1])[:4]}, file=sys.stderr)
+    if total < 0.3:          # essentially monochrome wallpaper
+        return DEFAULT_ACCENT
+    return max(votes, key=votes.get)
+
+
+# ---------------------------------------------------------------- state
+def load_state():
+    try:
+        return json.loads(STATE.read_text())
+    except Exception:
+        return {"wallpaper": str(WALL_DIR / "sword.jpg"), "accent": DEFAULT_ACCENT, "mode": "auto"}
+
+
+def save_state(st):
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    st["accentHex"] = MOCHA[st["accent"]]
+    st["updated"] = int(time.time())
+    tmp = STATE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(st, indent=2))
+    tmp.replace(STATE)
+
+
+def run(*cmd, quiet=True):
+    try:
+        return subprocess.run(cmd, stdout=subprocess.DEVNULL if quiet else None,
+                              stderr=subprocess.DEVNULL if quiet else None, timeout=15).returncode
+    except Exception:
+        return 1
+
+
+def have(b):
+    return shutil.which(b) is not None
+
+
+def write(path, text):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() and path.read_text() == text:
+        return False
+    path.write_text(text)
+    return True
+
+
+# ---------------------------------------------------------------- renderers
+def P(name):
+    return MOCHA[name]
+
+
+def rgba(hexc, alpha="ff"):
+    return f"rgba({hexc.lstrip('#')}{alpha})"
+
+
+def render_hyprland(acc, live=True):
+    a = P(acc)
+    lua = f'''-- Generated by mocha-theme. Do not edit; change the wallpaper or run `mocha-theme accent <name>`.
+hl.config({{
+    general = {{
+        col = {{
+            active_border   = {{ colors = {{ "{rgba(a, 'ff')}", "{rgba(a, '88')}" }}, angle = 45 }},
+            inactive_border = "{rgba(P('surface0'), 'cc')}",
+        }},
+    }},
+    decoration = {{
+        shadow = {{ color = "{rgba(P('crust'), 'ee')}" }},
+    }},
+    misc = {{ background_color = "{rgba(P('crust'))}" }},
+}})
+'''
+    write(CFG / "hypr/mocha-theme.lua", lua)
+    if live and os.environ.get("HYPRLAND_INSTANCE_SIGNATURE") and have("hyprctl"):
+        body = lua.split("\n", 1)[1].replace("\n", " ")
+        run("hyprctl", "dispatch", f"function() {body} end")
+
+
+def render_kitty(acc):
+    a = P(acc)
+    conf = f'''# Generated by mocha-theme — Catppuccin Mocha with "{acc}" accent.
+foreground              {P('text')}
+background              {P('base')}
+selection_foreground    {P('base')}
+selection_background    {a}
+cursor                  {a}
+cursor_text_color       {P('base')}
+url_color               {a}
+active_border_color     {a}
+inactive_border_color   {P('surface1')}
+bell_border_color       {P('yellow')}
+active_tab_foreground   {P('crust')}
+active_tab_background   {a}
+inactive_tab_foreground {P('subtext0')}
+inactive_tab_background {P('mantle')}
+tab_bar_background      {P('crust')}
+mark1_foreground {P('base')}
+mark1_background {P('lavender')}
+mark2_foreground {P('base')}
+mark2_background {P('mauve')}
+mark3_foreground {P('base')}
+mark3_background {P('sapphire')}
+color0  {P('surface1')}
+color8  {P('surface2')}
+color1  {P('red')}
+color9  {P('red')}
+color2  {P('green')}
+color10 {P('green')}
+color3  {P('yellow')}
+color11 {P('yellow')}
+color4  {P('blue')}
+color12 {P('blue')}
+color5  {P('pink')}
+color13 {P('pink')}
+color6  {P('teal')}
+color14 {P('teal')}
+color7  {P('subtext1')}
+color15 {P('subtext0')}
+'''
+    if write(CFG / "kitty/mocha-theme.conf", conf) and have("pkill"):
+        run("pkill", "-USR1", "-x", "kitty")
+
+
+def render_hokum(acc):
+    a = P(acc)
+    theme = f'''// Generated by mocha-theme — Catppuccin Mocha, "{acc}" accent.
+name "Mocha"
+tokens {{
+    width 380
+    radius 14
+    padding 14
+    gap 8
+    spacing 10
+    badge-radius 8
+    icon-size 22
+    font "mono"
+    font-size 13
+    title-weight 600
+    fill "{P('base')}f2"
+    text "{P('text')}"
+    muted "{P('subtext0')}"
+    faint "{P('overlay1')}"
+    border 1 "{P('surface0')}"
+    accent "{a}"
+    shadow "soft"
+    mark "icon"
+    enter "slide"
+    motion 0.34 0.08
+}}
+tokens "light" {{
+    fill "{P('base')}f2"
+    text "{P('text')}"
+    muted "{P('subtext0')}"
+    faint "{P('overlay1')}"
+    border 1 "{P('surface0')}"
+}}
+template "card" {{
+    row gap=8 align="center" {{
+        badge
+        text "{{source}}" size=11 weight=600 color="{a}" lines=1 grow=#true
+        text "{{time}}" size=11 color="faint"
+        close
+    }}
+    row gap=10 {{
+        col gap=3 grow=#true {{
+            if "summary" {{ text "{{summary}}" weight="title" }}
+            if "body" {{ text "{{body}}" color="muted" lines=6 }}
+            if "value" {{ progress color="{a}" }}
+        }}
+        if "image" {{ image width=48 height=48 radius=10 }}
+    }}
+    actions
+}}
+rule urgency="critical" {{ tokens {{ border 1 "{P('red')}"; accent "{P('red')}" }} }}
+'''
+    write(CFG / "hokum/themes/mocha.kdl", theme)
+    cfg = CFG / "hokum/config.kdl"
+    text = cfg.read_text() if cfg.exists() else ""
+    lines = [l for l in text.splitlines() if not l.strip().startswith("theme ")]
+    if not any(l.strip().startswith("behaviour") for l in lines):
+        lines += ["", "behaviour {", '    position "top-right"', "    stay 6",
+                  "    show-at-most 4", "    pause-on-hover #true", '    appearance "dark"',
+"}"]
+    header = [l for l in lines if l.startswith("//")]
+    rest = [l for l in lines if not l.startswith("//")]
+    write(cfg, "\n".join(header + ['theme "mocha"'] + rest).strip() + "\n")
+
+
+def render_gtk(acc):
+    a = P(acc)
+    css = f'''/* Generated by mocha-theme — Catppuccin Mocha, "{acc}" accent (libadwaita / adw-gtk3 named colours). */
+@define-color accent_color {a};
+@define-color accent_bg_color {a};
+@define-color accent_fg_color {P('crust')};
+@define-color destructive_color {P('red')};
+@define-color destructive_bg_color {P('red')};
+@define-color destructive_fg_color {P('crust')};
+@define-color success_color {P('green')};
+@define-color success_bg_color {P('green')};
+@define-color success_fg_color {P('crust')};
+@define-color warning_color {P('yellow')};
+@define-color warning_bg_color {P('yellow')};
+@define-color warning_fg_color {P('crust')};
+@define-color error_color {P('red')};
+@define-color error_bg_color {P('red')};
+@define-color error_fg_color {P('crust')};
+@define-color window_bg_color {P('base')};
+@define-color window_fg_color {P('text')};
+@define-color view_bg_color {P('base')};
+@define-color view_fg_color {P('text')};
+@define-color headerbar_bg_color {P('mantle')};
+@define-color headerbar_fg_color {P('text')};
+@define-color headerbar_border_color {P('surface0')};
+@define-color headerbar_backdrop_color {P('mantle')};
+@define-color headerbar_shade_color rgba(0,0,0,0.36);
+@define-color headerbar_darker_shade_color rgba(0,0,0,0.9);
+@define-color sidebar_bg_color {P('mantle')};
+@define-color sidebar_fg_color {P('text')};
+@define-color sidebar_backdrop_color {P('mantle')};
+@define-color sidebar_shade_color rgba(0,0,0,0.36);
+@define-color sidebar_border_color {P('surface0')};
+@define-color secondary_sidebar_bg_color {P('crust')};
+@define-color secondary_sidebar_fg_color {P('text')};
+@define-color secondary_sidebar_backdrop_color {P('crust')};
+@define-color secondary_sidebar_shade_color rgba(0,0,0,0.36);
+@define-color secondary_sidebar_border_color {P('surface0')};
+@define-color card_bg_color {P('surface0')};
+@define-color card_fg_color {P('text')};
+@define-color card_shade_color rgba(0,0,0,0.36);
+@define-color dialog_bg_color {P('mantle')};
+@define-color dialog_fg_color {P('text')};
+@define-color popover_bg_color {P('mantle')};
+@define-color popover_fg_color {P('text')};
+@define-color popover_shade_color rgba(0,0,0,0.25);
+@define-color thumbnail_bg_color {P('surface0')};
+@define-color thumbnail_fg_color {P('text')};
+@define-color shade_color rgba(0,0,0,0.36);
+@define-color scrollbar_outline_color rgba(0,0,0,0.5);
+'''
+    for d in ("gtk-3.0", "gtk-4.0"):
+        write(CFG / d / "gtk.css", css)
+        settings = f'''[Settings]
+gtk-application-prefer-dark-theme=1
+gtk-theme-name=adw-gtk3-dark
+gtk-icon-theme-name=Papirus-Dark
+gtk-cursor-theme-name=catppuccin-mocha-dark-cursors
+gtk-cursor-theme-size=24
+gtk-font-name=Inter 11
+'''
+        if d == "gtk-4.0":
+            settings = settings.replace("gtk-theme-name=adw-gtk3-dark\n", "")
+        write(CFG / d / "settings.ini", settings)
+    if have("gsettings"):
+        for k, v in (("color-scheme", "prefer-dark"), ("gtk-theme", "adw-gtk3-dark"),
+                     ("icon-theme", "Papirus-Dark"), ("cursor-theme", "catppuccin-mocha-dark-cursors"),
+                     ("cursor-size", "24"), ("font-name", "Inter 11"),
+                     ("monospace-font-name", "JetBrainsMono Nerd Font 11")):
+            run("gsettings", "set", "org.gnome.desktop.interface", k, v)
+
+
+def render_qt(acc):
+    a = P(acc)
+    # QPalette order: WindowText, Button, Light, Midlight, Dark, Mid, Text, BrightText,
+    # ButtonText, Base, Window, Shadow, Highlight, HighlightedText, Link, LinkVisited,
+    # AlternateBase, NoRole, ToolTipBase, ToolTipText, PlaceholderText (qt6ct wants exactly 21)
+    def row(*names):
+        return ", ".join("#ff" + (MOCHA[n] if n in MOCHA else n).lstrip("#") for n in names)
+    active = row("text", "surface0", "surface1", "surface0", "crust", "mantle", "text", "text",
+                 "text", "mantle", "base", "crust", a, "crust", a, "mauve",
+                 "surface0", "base", "mantle", "text", "overlay1")
+    disabled = row("overlay0", "surface0", "surface1", "surface0", "crust", "mantle", "overlay0",
+                   "overlay0", "overlay0", "mantle", "base", "crust", "surface1", "overlay1",
+                   "overlay1", "overlay1", "surface0", "base", "mantle", "overlay0", "overlay0")
+    colors = f"[ColorScheme]\nactive_colors={active}\ndisabled_colors={disabled}\ninactive_colors={active}\n"
+    for v in ("qt6ct", "qt5ct"):
+        write(CFG / v / "colors/mocha.conf", colors)
+        write(CFG / v / f"{v}.conf", f'''[Appearance]
+color_scheme_path={CFG / v / "colors/mocha.conf"}
+custom_palette=true
+icon_theme=Papirus-Dark
+standard_dialogs=xdgdesktopportal
+style=Fusion
+
+[Fonts]
+fixed="JetBrainsMono Nerd Font,11,-1,5,400,0,0,0,0,0,0,0,0,0,0,1"
+general="Inter,11,-1,5,400,0,0,0,0,0,0,0,0,0,0,1"
+
+[Interface]
+activate_item_on_single_click=1
+buttonbox_layout=0
+cursor_flash_time=1000
+dialog_buttons_have_icons=1
+double_click_interval=400
+menus_have_icons=true
+show_shortcuts_in_context_menus=true
+toolbutton_style=4
+underline_shortcut=1
+wheel_scroll_lines=3
+''')
+
+
+def render_kde(acc):
+    """KDE apps (Dolphin, Kate, …) take colours from kdeglobals, not qt6ct."""
+    def c(n):
+        r, g, b = hex_rgb(MOCHA[n] if n in MOCHA else n)
+        return f"{r},{g},{b}"
+    a = acc
+
+    def section(name, bg, bg_alt, fg="text"):
+        return f"""[Colors:{name}]
+BackgroundAlternate={c(bg_alt)}
+BackgroundNormal={c(bg)}
+DecorationFocus={c(a)}
+DecorationHover={c(a)}
+ForegroundActive={c(a)}
+ForegroundInactive={c('overlay1')}
+ForegroundLink={c(a)}
+ForegroundNegative={c('red')}
+ForegroundNeutral={c('yellow')}
+ForegroundNormal={c(fg)}
+ForegroundPositive={c('green')}
+ForegroundVisited={c('mauve')}
+
+"""
+    sel = section("Selection", a, a, "crust").replace(
+        f"ForegroundInactive={c('overlay1')}", f"ForegroundInactive={c('mantle')}")
+    text = ("[ColorEffects:Disabled]\nColor=" + c("surface0") + "\nColorAmount=0.3\nColorEffect=2\n"
+            "ContrastAmount=0.1\nContrastEffect=0\nIntensityAmount=-1\nIntensityEffect=0\n\n"
+            "[ColorEffects:Inactive]\nChangeSelectionColor=false\nEnable=false\n\n"
+            + section("Button", "surface0", "surface1")
+            + section("Complementary", "crust", "mantle")
+            + section("Header", "mantle", "crust")
+            + section("Header][Inactive", "mantle", "crust")
+            + sel
+            + section("Tooltip", "mantle", "base")
+            + section("View", "base", "mantle")
+            + section("Window", "mantle", "crust")
+            + f"""[General]
+ColorScheme=CatppuccinMocha
+AccentColor={c(a)}
+font=Inter,11,-1,5,400,0,0,0,0,0,0,0,0,0,0,1
+fixed=JetBrainsMono Nerd Font,11,-1,5,400,0,0,0,0,0,0,0,0,0,0,1
+
+[Icons]
+Theme=Papirus-Dark
+
+[KDE]
+contrast=4
+widgetStyle=Fusion
+
+[WM]
+activeBackground={c('mantle')}
+activeForeground={c('text')}
+inactiveBackground={c('crust')}
+inactiveForeground={c('overlay1')}
+""")
+    write(CFG / "kdeglobals", text)
+    # KF6 apps apply the scheme *named* in kdeglobals; it must exist as a .colors file
+    scheme = text.split("[General]")[0] + "[General]\nColorScheme=CatppuccinMocha\nName=Catppuccin Mocha\nshadeSortColumn=true\n"
+    write(HOME / ".local/share/color-schemes/CatppuccinMocha.colors", scheme)
+    # KF6 apps pick their scheme per app ([UiSettings] in <app>rc) and default to Breeze Light
+    for app in ("dolphinrc", "katerc", "kwriterc", "okularrc", "gwenviewrc", "arkrc", "konsolerc",
+                "kcalcrc", "spectaclerc", "filelightrc", "partitionmanagerrc", "kdenliverc", "elisarc"):
+        set_ini(CFG / app, "UiSettings", "ColorScheme", "CatppuccinMocha")
+
+
+def set_ini(path, section, key, value):
+    """Set key=value in [section] of an INI file, keeping everything else."""
+    lines = path.read_text().splitlines() if path.exists() else []
+    out, in_sec, done = [], False, False
+    for l in lines:
+        if l.startswith("["):
+            if in_sec and not done:
+                out.append(f"{key}={value}")
+                done = True
+            in_sec = l.strip() == f"[{section}]"
+        elif in_sec and l.split("=", 1)[0].strip() == key:
+            if not done:
+                out.append(f"{key}={value}")
+                done = True
+            continue
+        out.append(l)
+    if not done:
+        if not in_sec:
+            out += (["", f"[{section}]"] if out else [f"[{section}]"])
+        out.append(f"{key}={value}")
+    write(path, "\n".join(out) + "\n")
+
+
+def render_mpv(acc):
+    c = {k: v.lstrip("#") for k, v in MOCHA.items()}
+    write(CFG / "mpv/script-opts/uosc.conf", f"""# Generated by mocha-theme — uosc in Catppuccin Mocha, "{acc}" accent.
+color=foreground={c[acc]},foreground_text={c['crust']},background={c['base']},background_text={c['text']},curtain={c['crust']},success={c['green']},error={c['red']}
+font_scale=1
+font_bold=no
+timeline_style=line
+timeline_line_width=2
+timeline_size=40
+progress=windowed
+progress_size=2
+top_bar=no-border
+top_bar_title=yes
+refine=text_width
+""")
+
+
+def render_chrome(acc):
+    """Chrome theme colour via managed policy. cachyos-dotfiles/system/setup creates the policy
+    file owned by the user, so it can be rewritten without sudo."""
+    for d in ("/etc/opt/chrome/policies/managed", "/etc/chromium/policies/managed"):
+        f = Path(d) / "mocha-theme.json"
+        if f.exists() and os.access(f, os.W_OK):
+            f.write_text(json.dumps({"BrowserThemeColor": MOCHA[acc]}, indent=2) + "\n")
+
+
+def render_zsh(acc):
+    """Powerlevel10k colours (accent-dependent part). New shells pick it up;
+    `exec zsh` refreshes an open one."""
+    a, P_ = MOCHA[acc], MOCHA
+    v = {
+        "DIR_FOREGROUND": a, "DIR_ANCHOR_FOREGROUND": a, "DIR_SHORTENED_FOREGROUND": P_["overlay1"],
+        "DIR_ANCHOR_BOLD": "true",
+        "PROMPT_CHAR_OK_{VIINS,VICMD,VIVIS,VIOWR}_FOREGROUND": a,
+        "PROMPT_CHAR_ERROR_{VIINS,VICMD,VIVIS,VIOWR}_FOREGROUND": P_["red"],
+        "STATUS_OK_FOREGROUND": P_["green"], "STATUS_ERROR_FOREGROUND": P_["red"],
+        "STATUS_ERROR_SIGNAL_FOREGROUND": P_["red"], "STATUS_ERROR_PIPE_FOREGROUND": P_["red"],
+        "COMMAND_EXECUTION_TIME_FOREGROUND": P_["peach"], "BACKGROUND_JOBS_FOREGROUND": P_["green"],
+        "CONTEXT_FOREGROUND": P_["subtext0"], "CONTEXT_ROOT_FOREGROUND": P_["red"],
+        "TIME_FOREGROUND": P_["overlay1"], "VCS_LOADING_FOREGROUND": P_["overlay0"],
+        "VCS_VISUAL_IDENTIFIER_COLOR": a, "MULTILINE_FIRST_PROMPT_GAP_FOREGROUND": P_["surface1"],
+        "VIRTUALENV_FOREGROUND": P_["teal"], "NODE_VERSION_FOREGROUND": P_["green"],
+    }
+    lines = [f"# Generated by mocha-theme — Powerlevel10k colours, \"{acc}\" accent."]
+    for k, val in v.items():
+        val = val if val in ("true", "false") else f"'{val}'"
+        lines.append(f"typeset -g POWERLEVEL9K_{k}={val}")
+    write(CFG / "zsh/p10k-mocha.zsh", "\n".join(lines) + "\n")
+
+
+def render_nvim(acc):
+    """LazyVim reads this on start (lua/plugins/colorscheme.lua)."""
+    write(CFG / "nvim/lua/config/mocha-accent.lua",
+          f'-- Generated by mocha-theme. Current desktop accent.\nreturn {{ name = "{acc}", hex = "{MOCHA[acc]}" }}\n')
+
+
+def render_zed(acc):
+    """Zed: keep only the accent overrides in sync; the rest of settings.json is yours."""
+    f = CFG / "zed/settings.json"
+    if not f.exists():
+        return
+    try:
+        cfg = json.loads(f.read_text())
+    except Exception:
+        return   # comments / hand edits Zed allows but json can't parse — leave it alone
+    a = MOCHA[acc]
+    exp = cfg.setdefault("experimental.theme_overrides", {})
+    exp.update({
+        "border.focused": a,
+        "border.selected": a,
+        "text.accent": a,
+        "icon.accent": a,
+        "players": [{"cursor": a, "selection": a + "40", "background": a}],
+        "editor.active_line_number": a,
+        "scrollbar.thumb.hover_background": a + "60",
+    })
+    write(f, json.dumps(cfg, indent=2) + "\n")
+
+
+def render_mangohud(acc):
+    c = {k: v.lstrip("#") for k, v in MOCHA.items()}
+    write(CFG / "MangoHud/MangoHud.conf", f"""# Generated by mocha-theme — MangoHud in Catppuccin Mocha, "{acc}" accent.
+# Hidden at start; Right Shift+F12 shows it, Right Shift+F11 cycles position.
+toggle_hud=Shift_R+F12
+toggle_hud_position=Shift_R+F11
+no_display
+legacy_layout=false
+horizontal
+hud_compact
+position=top-left
+round_corners=10
+background_alpha=0.75
+background_color={c['base']}
+font_size=20
+font_file=/usr/share/fonts/TTF/JetBrainsMonoNerdFont-Medium.ttf
+text_color={c['text']}
+text_outline=0
+
+fps
+fps_color_change
+fps_value=30,60
+fps_color={c['red']},{c['yellow']},{c['green']}
+frametime
+frametime_color={c[acc]}
+frame_timing=0
+gpu_stats
+gpu_temp
+gpu_color={c[acc]}
+cpu_stats
+cpu_temp
+cpu_color={c['blue']}
+ram
+ram_color={c['mauve']}
+vram
+vram_color={c['teal']}
+engine_color={c[acc]}
+wine_color={c[acc]}
+media_player_color={c['text']}
+gamemode
+""")
+
+
+def render_obs(acc):
+    """OBS: Catppuccin Mocha variant whose highlight colours are the accent.
+    Extends the upstream catppuccin/obs base theme (themes/Catppuccin.obt)."""
+    d = CFG / "obs-studio/themes"
+    if not (d / "Catppuccin.obt").exists():
+        return
+    a = MOCHA[acc]
+    names = ["rosewater", "flamingo", "pink", "mauve", "red", "maroon", "peach", "yellow", "green",
+             "teal", "sky", "sapphire", "blue", "lavender", "text", "subtext1", "subtext0", "overlay2",
+             "overlay1", "overlay0", "surface2", "surface1", "surface0", "base", "mantle", "crust"]
+    var = {n: MOCHA[n] for n in names}
+    # the base theme uses blue / lavender / sapphire as its highlight family
+    for n in ("blue", "lavender", "sapphire"):
+        var[n] = a
+    body = "\n".join(f"    --ctp_{n}: {v};" for n, v in var.items())
+    write(d / "Catppuccin_Mocha_Accent.ovt", f"""@OBSThemeMeta {{
+    name: 'Mocha (desktop accent)';
+    id: 'com.obsproject.Catppuccin.MochaAccent';
+    extends: 'com.obsproject.Catppuccin';
+    author: 'catppuccin/obs, recoloured by mocha-theme';
+    dark: 'true';
+}}
+
+@OBSThemeVars {{
+{body}
+}}
+""")
+
+
+def render_fuzzel(acc):
+    a = P(acc).lstrip("#")
+    c = {k: v.lstrip("#") for k, v in MOCHA.items()}
+    write(CFG / "fuzzel/fuzzel.ini", f'''# Generated by mocha-theme (fallback launcher; the Quickshell launcher is primary)
+[main]
+font=JetBrainsMono Nerd Font:size=12
+terminal=kitty
+prompt="  "
+icon-theme=Papirus-Dark
+width=42
+lines=10
+horizontal-pad=20
+vertical-pad=14
+inner-pad=8
+layer=overlay
+
+[colors]
+background={c['base']}f2
+text={c['text']}ff
+prompt={a}ff
+placeholder={c['overlay1']}ff
+input={c['text']}ff
+match={a}ff
+selection={c['surface0']}ff
+selection-text={c['text']}ff
+selection-match={a}ff
+counter={c['overlay1']}ff
+border={a}ff
+
+[border]
+width=2
+radius=14
+''')
+
+
+def render_greeter(st):
+    """Keep the installed greeter (see scripts/install-greeter) in sync. The
+    installer makes theme.json and wallpaper owned by the user, so no sudo."""
+    d = Path("/etc/greetd/mocha-greeter")
+    tj, wp = d / "theme.json", d / "wallpaper"
+    if not (tj.exists() and os.access(tj, os.W_OK)):
+        return
+    g = {"accent": st["accent"], "accentHex": MOCHA[st["accent"]], "mode": st.get("mode", "auto"),
+         "wallpaper": str(wp)}
+    tj.write_text(json.dumps(g, indent=2))
+    if os.access(wp, os.W_OK) and st.get("wallpaper") and Path(st["wallpaper"]).exists():
+        shutil.copyfile(st["wallpaper"], wp)
+
+
+def apply_all(st, live=True):
+    acc = st["accent"]
+    for fn in (lambda: render_hyprland(acc, live), lambda: render_kitty(acc), lambda: render_hokum(acc),
+               lambda: render_gtk(acc), lambda: render_qt(acc), lambda: render_kde(acc), lambda: render_mpv(acc), lambda: render_chrome(acc), lambda: render_zsh(acc),
+               lambda: render_nvim(acc), lambda: render_zed(acc), lambda: render_mangohud(acc), lambda: render_obs(acc),
+               lambda: render_fuzzel(acc),
+               lambda: render_greeter(st)):
+        try:
+            fn()
+        except Exception as e:
+            print(f"mocha-theme: renderer failed: {e}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------- wallpaper
+def wait_awww(timeout=8):
+    end = time.time() + timeout
+    while time.time() < end:
+        if run("awww", "query") == 0:
+            return True
+        time.sleep(0.25)
+    return False
+
+
+def set_wallpaper(path, transition=True):
+    if not have("awww"):
+        return
+    wait_awww()
+    args = ["awww", "img", str(path)]
+    if transition:
+        args += ["--transition-type", "grow", "--transition-pos", "top-right",
+                 "--transition-duration", "1.2", "--transition-fps", "144"]
+    else:
+        args += ["--transition-type", "none"]
+    run(*args)
+    # keep waypaper's idea of the current wallpaper in sync
+    wp = CFG / "waypaper/config.ini"
+    if wp.exists():
+        out = []
+        for l in wp.read_text().splitlines():
+            out.append(f"wallpaper = {path}" if l.startswith("wallpaper =") else l)
+        wp.write_text("\n".join(out) + "\n")
+
+
+def make_thumbs():
+    from PIL import Image, ImageOps
+    out = HOME / ".cache/mocha-shell/thumbs"
+    out.mkdir(parents=True, exist_ok=True)
+    made = 0
+    for p in sorted(WALL_DIR.iterdir()):
+        if p.suffix.lower() not in IMAGE_EXT:
+            continue
+        t = out / (p.name + ".jpg")
+        if t.exists() and t.stat().st_mtime >= p.stat().st_mtime:
+            continue
+        try:
+            im = Image.open(p)
+            im.seek(0)
+            im = ImageOps.fit(im.convert("RGB"), (384, 216), Image.LANCZOS)
+            im.save(t, "JPEG", quality=86)
+            made += 1
+        except Exception as e:
+            print(f"thumb failed {p.name}: {e}", file=sys.stderr)
+    print(f"{made} thumbnails written to {out}")
+
+
+def main(argv):
+    if len(argv) < 2 or argv[1] in ("-h", "--help"):
+        print(__doc__)
+        return 0
+    cmd, args = argv[1], argv[2:]
+    st = load_state()
+    st.setdefault("mode", "auto")
+
+    if cmd == "detect":
+        print(detect_accent(args[0]))
+    elif cmd == "get":
+        print(json.dumps(st))
+    elif cmd in ("set", "random"):
+        if cmd == "random":
+            pool = [p for p in WALL_DIR.iterdir() if p.suffix.lower() in IMAGE_EXT and str(p) != st.get("wallpaper")]
+            path = random.choice(pool)
+        else:
+            if not args:
+                print("usage: mocha-theme set <image> [--no-wallpaper]", file=sys.stderr)
+                return 2
+            path = Path(os.path.expanduser(args[0])).resolve()
+        if "--no-wallpaper" not in args:
+            set_wallpaper(path)
+        st["wallpaper"] = str(path)
+        if st["mode"] == "auto":
+            st["accent"] = detect_accent(path)
+        save_state(st)
+        apply_all(st)
+        print(st["accent"])
+    elif cmd == "accent":
+        name = (args[0] if args else "auto").lower()
+        if name == "auto":
+            st["mode"] = "auto"
+            st["accent"] = detect_accent(st["wallpaper"])
+        elif name in ACCENTS:
+            st["mode"] = "manual"
+            st["accent"] = name
+        else:
+            print(f"unknown accent '{name}'. choose: auto, {', '.join(ACCENTS)}", file=sys.stderr)
+            return 2
+        save_state(st)
+        apply_all(st)
+        print(st["accent"])
+    elif cmd == "restore":
+        set_wallpaper(st["wallpaper"], transition=False)
+        if "accentHex" not in st:
+            st["accent"] = detect_accent(st["wallpaper"]) if st["mode"] == "auto" else st["accent"]
+        save_state(st)
+        apply_all(st)
+    elif cmd == "thumbs":
+        make_thumbs()
+    elif cmd == "apply":
+        save_state(st)
+        apply_all(st)
+    else:
+        print(__doc__)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
