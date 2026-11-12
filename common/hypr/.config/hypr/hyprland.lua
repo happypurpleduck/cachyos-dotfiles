@@ -448,6 +448,40 @@ hl.window_rule({
 	center = true,
 })
 
+-- Desktop utilities: float, centred, sized as a fraction of the monitor so the same
+-- rules fit any machine (on a 2560x1440 monitor 0.5 x 0.6 = 1280x864).
+-- No size = the app picks its own (Calculator resizes itself per mode).
+local utilityApps = {
+	{ name = "calculator", class = "org.gnome.Calculator" },
+	{ name = "image-viewer", class = "org.gnome.Loupe", size = { 0.6, 0.7 } },
+	{ name = "quick-preview", class = "org.gnome.NautilusPreviewer", size = { 0.55, 0.65 } }, -- Space in Nautilus
+	{ name = "archives", class = "org.gnome.FileRoller", size = { 0.36, 0.42 } },
+	{ name = "disk-usage", class = "org.gnome.baobab", size = { 0.45, 0.55 } },
+	{ name = "disks", class = "org.gnome.DiskUtility", size = { 0.42, 0.5 } },
+	{ name = "task-manager", class = "io.missioncenter.MissionCenter", size = { 0.5, 0.6 } },
+}
+for _, app in ipairs(utilityApps) do
+	hl.window_rule({
+		name = "utility-" .. app.name,
+		match = { class = "^" .. app.class:gsub("%.", "\\.") .. "$" },
+		float = true,
+		center = true,
+		size = app.size and string.format("monitor_w*%s monitor_h*%s", app.size[1], app.size[2]) or nil,
+	})
+end
+
+-- Browser picture-in-picture (Chrome "Picture in picture", Firefox "Picture-in-Picture"):
+-- small, pinned on every workspace, tucked into the bottom-right corner
+hl.window_rule({
+	name = "picture-in-picture",
+	match = { title = "^(Picture[ -]in[ -][Pp]icture)$" },
+	float = true,
+	pin = true,
+	keep_aspect_ratio = true,
+	size = "monitor_w*0.25 monitor_h*0.25",
+	move = "monitor_w-window_w-24 monitor_h-window_h-24",
+})
+
 -- Games: Steam games (steam_app_*), gamescope and anything that tags itself as a
 -- game go truly fullscreen, skip compositor latency (tearing allowed) and keep the
 -- idle lock / screen-off from kicking in mid-game.

@@ -58,6 +58,14 @@ gvfs
 gvfs-mtp
 ffmpegthumbnailer
 gnome-keyring
+gnome-calculator
+loupe
+papers
+file-roller
+baobab
+gnome-disk-utility
+mission-center
+sushi
 mpv
 mpv-mpris
 yt-dlp

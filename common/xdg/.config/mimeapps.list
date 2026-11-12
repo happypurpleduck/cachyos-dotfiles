@@ -28,4 +28,28 @@ application/toml=dev.zed.Zed.desktop
 text/x-lua=dev.zed.Zed.desktop
 x-scheme-handler/t3code=com.t3tools.T3Code.desktop
 
+image/png=org.gnome.Loupe.desktop
+image/jpeg=org.gnome.Loupe.desktop
+image/gif=org.gnome.Loupe.desktop
+image/webp=org.gnome.Loupe.desktop
+image/avif=org.gnome.Loupe.desktop
+image/heic=org.gnome.Loupe.desktop
+image/jxl=org.gnome.Loupe.desktop
+image/bmp=org.gnome.Loupe.desktop
+image/tiff=org.gnome.Loupe.desktop
+image/svg+xml=org.gnome.Loupe.desktop
+image/x-icon=org.gnome.Loupe.desktop
+application/pdf=org.gnome.Papers.desktop
+application/zip=org.gnome.FileRoller.desktop
+application/x-7z-compressed=org.gnome.FileRoller.desktop
+application/vnd.rar=org.gnome.FileRoller.desktop
+application/x-rar=org.gnome.FileRoller.desktop
+application/x-tar=org.gnome.FileRoller.desktop
+application/gzip=org.gnome.FileRoller.desktop
+application/x-compressed-tar=org.gnome.FileRoller.desktop
+application/x-xz-compressed-tar=org.gnome.FileRoller.desktop
+application/zstd=org.gnome.FileRoller.desktop
+application/x-zstd-compressed-tar=org.gnome.FileRoller.desktop
+application/x-bzip2-compressed-tar=org.gnome.FileRoller.desktop
+
 [Added Associations]

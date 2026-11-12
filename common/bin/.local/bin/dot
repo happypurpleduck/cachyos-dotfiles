@@ -71,6 +71,10 @@ cmd_link() {
     warn "no hosts/$HOST yet — only the shared config is linked. Create it with: dot new-host"
   fi
   seed
+  # Hyprland doesn't notice edits made through the symlinks; reload it ourselves
+  if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && command -v hyprctl >/dev/null; then
+    hyprctl reload >/dev/null && echo "   reloaded Hyprland"
+  fi
 }
 
 # seed/: configs apps rewrite all the time (btop, waypaper, zed). Copied once, never linked.
@@ -141,7 +145,7 @@ cmd_save() {
 cmd_pull() {
   git -C "$DOT" pull --rebase --autostash
   cmd_link
-  say "Hyprland reloads by itself; restart the shell with: pkill -x quickshell; pkill -x qs; hyprctl dispatch 'hl.dsp.exec_cmd(\"qs\")'"
+  say "restart the shell with: pkill -x quickshell; pkill -x qs; hyprctl dispatch 'hl.dsp.exec_cmd(\"qs\")'"
 }
 
 pkglist() { grep -v -E '^\s*(#|$)' "$1" 2>/dev/null | awk '{print $1}' || true; }
