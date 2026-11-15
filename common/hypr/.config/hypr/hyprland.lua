@@ -122,7 +122,10 @@ hl.config({
 		resize_on_border = false,
 
 		-- Please see https://wiki.hypr.land/configuring/extra/tearing/ before you turn this on
-		allow_tearing = true, -- only for windows with the "immediate" rule (games)
+		-- OFF: on NVIDIA, async (tearing) page-flips sometimes get rejected (EINVAL) when a
+		-- fullscreen game regains focus, leaving the output stuck on a frame while the game
+		-- keeps running (hit with MHW, 2026-11-15). The "immediate" game rules are inert while off.
+		allow_tearing = false,
 
 		layout = "dwindle",
 	},
