@@ -128,6 +128,30 @@ cmd_status() {
   [ $bad -eq 1 ] || echo "   all links ok"
 }
 
+# dot diff [--stat] [path…] — everything `dot save` would commit:
+#   1. changes in the repo (edits through the links, new and deleted files)
+#   2. files an app replaced with a plain copy (shown against the repo version)
+# Paths filter part 1 (repo paths, e.g. `dot diff common/hypr`).
+cmd_diff() {
+  local stat=() src dst f color=never
+  [ "${1:-}" = "--stat" ] && { stat=(--stat); shift; }
+  [ -t 1 ] && color=always
+  {
+    git -C "$DOT" --no-pager diff --color=$color "${stat[@]}" HEAD -- "$@"
+    # untracked files aren't in `git diff`; show them as new
+    git -C "$DOT" ls-files --others --exclude-standard -- "$@" | while read -r f; do
+      git -C "$DOT" --no-pager diff --color=$color "${stat[@]}" --no-index /dev/null "$f" || true
+    done
+    [ $# -eq 0 ] || exit 0
+    while IFS=$'\t' read -r src dst; do
+      if [ -f "$dst" ] && [ ! -L "$dst" ] && ! linked "$src" "$dst"; then
+        printf '\n\033[1;33m## replaced by an app: ~/%s (dot save copies it into the repo)\033[0m\n' "${dst#"$HOME"/}"
+        git --no-pager diff --color=$color "${stat[@]}" --no-index "$src" "$dst" || true
+      fi
+    done < <(each_file)
+  } | if [ -t 1 ]; then less -RFX; else cat; fi
+}
+
 cmd_save() {
   local msg=${1:-"$HOST: update"}
   absorb
@@ -330,6 +354,7 @@ dot — ~/cachyos-dotfiles on $HOST
   dot link             (re)link everything for this machine (common/* + hosts/$HOST)
   dot unlink           remove the links (repo files stay)
   dot status           git status + links that are missing or were replaced by an app
+  dot diff [--stat] [path…]  what \`dot save\` would commit (line by line, or a summary)
   dot save [message]   take back app-replaced files, commit, pull --rebase, push
   dot pull             pull other machines' changes and relink
   dot add [--host] F…  move file(s) into the repo (common, or this host with --host) and link
@@ -346,6 +371,7 @@ case ${1:-help} in
   link) cmd_link ;;
   unlink) cmd_unlink ;;
   status | st) cmd_status ;;
+  diff | d) shift; cmd_diff "$@" ;;
   save) shift; cmd_save "$*" ;;
   pull | sync) cmd_pull ;;
   add) shift; cmd_add "$@" ;;
