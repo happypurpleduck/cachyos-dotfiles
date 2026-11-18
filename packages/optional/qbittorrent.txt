@@ -1,0 +1,2 @@
+# qBittorrent — torrent client (Qt, follows the Mocha palette via qt6ct)
+qbittorrent

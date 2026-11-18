@@ -150,13 +150,71 @@ cmd_pull() {
 
 pkglist() { grep -v -E '^\s*(#|$)' "$1" 2>/dev/null | awk '{print $1}' || true; }
 
+# ── optional package groups ───────────────────────────────────────────────
+# packages/optional/<group>.txt: first line "# description", then packages
+# ("aur:<name>" for AUR). Each machine's answers live in hosts/<host>/optional.txt:
+# "<group>" = installed here, "!<group>" = declined (not asked again).
+OPTDIR=$DOT/packages/optional
+opt_groups() { [ -d "$OPTDIR" ] && (cd "$OPTDIR" && for f in *.txt; do [ -e "$f" ] && echo "${f%.txt}"; done) || true; }
+opt_desc() { sed -n '1s/^# *//p' "$OPTDIR/$1.txt"; }
+opt_chosen() { grep -v -E '^\s*(#|$|!)' "$HOSTDIR/optional.txt" 2>/dev/null | awk '{print $1}' || true; }
+opt_state() { # yes | no | (empty = not asked yet)
+  grep -qx "$1" "$HOSTDIR/optional.txt" 2>/dev/null && { echo yes; return; }
+  grep -qx "!$1" "$HOSTDIR/optional.txt" 2>/dev/null && echo no || true
+}
+opt_record() { # opt_record <group> yes|no
+  local f=$HOSTDIR/optional.txt
+  [ -f "$f" ] || printf '# %s — optional package groups (dot optional). "!name" = declined.\n' "$HOST" >"$f"
+  sed -i -e "/^!\?$1\$/d" "$f"
+  [ "$2" = yes ] && echo "$1" >>"$f" || echo "!$1" >>"$f"
+}
+# packages of the chosen groups: repo ones, or AUR ones with "aur"
+opt_pkgs() {
+  local g
+  for g in $(opt_chosen); do
+    [ -f "$OPTDIR/$g.txt" ] || continue
+    if [ "${1:-}" = aur ]; then pkglist "$OPTDIR/$g.txt" | sed -n 's/^aur://p'
+    else pkglist "$OPTDIR/$g.txt" | grep -v '^aur:'; fi
+  done
+}
+
+# dot optional            ask about groups this machine hasn't answered yet
+# dot optional --ask      ask about every group again
+# dot optional <group>…   install these groups
+# dot optional --list     show groups and this machine's answers
+cmd_optional() {
+  [ -d "$HOSTDIR" ] || die "no hosts/$HOST (dot new-host)"
+  local g a st ask_all=0 picked=()
+  case ${1:-} in
+    --list | -l)
+      for g in $(opt_groups); do
+        st=$(opt_state "$g"); printf '  %-16s %-10s %s\n' "$g" "${st:-not asked}" "$(opt_desc "$g")"
+      done
+      return ;;
+    --ask) ask_all=1; shift ;;
+  esac
+  if [ $# -gt 0 ]; then
+    for g in "$@"; do [ -f "$OPTDIR/$g.txt" ] || die "no such group: $g (dot optional --list)"; picked+=("$g"); done
+  else
+    for g in $(opt_groups); do
+      st=$(opt_state "$g")
+      [ $ask_all -eq 0 ] && [ -n "$st" ] && continue
+      read -r -p ":: optional: $(opt_desc "$g") — install? [y/N] " a
+      if [[ ${a,,} == y* ]]; then picked+=("$g"); else opt_record "$g" no; fi
+    done
+  fi
+  [ ${#picked[@]} -gt 0 ] || { say "no optional groups to install"; return 0; }
+  for g in "${picked[@]}"; do opt_record "$g" yes; done
+  cmd_install_packages
+}
+
 cmd_packages() {
   [ -d "$HOSTDIR" ] || die "no hosts/$HOST (dot new-host)"
   local common aur
-  common=$(pkglist "$DOT/packages/common.txt" | sort -u)
-  aur=$(pkglist "$DOT/packages/aur.txt" | sort -u)
+  common=$( (pkglist "$DOT/packages/common.txt"; opt_pkgs) | sort -u)
+  aur=$( (pkglist "$DOT/packages/aur.txt"; opt_pkgs aur) | sort -u)
   {
-    echo "# $HOST — explicitly installed repo packages beyond packages/common.txt."
+    echo "# $HOST — explicitly installed repo packages beyond packages/common.txt and optional groups."
     echo "# Snapshot from \`dot packages\` ($(date +%F)); edit freely."
     comm -23 <(pacman -Qqen | sort -u) <(echo "$common")
   } >"$HOSTDIR/packages.txt"
@@ -170,14 +228,14 @@ cmd_packages() {
 
 cmd_install_packages() {
   local repo aurs avail missing
-  repo=$( (pkglist "$DOT/packages/common.txt"; pkglist "$HOSTDIR/packages.txt") | sort -u)
+  repo=$( (pkglist "$DOT/packages/common.txt"; pkglist "$HOSTDIR/packages.txt"; opt_pkgs) | sort -u)
   avail=$(pacman -Slq | sort -u)
   missing=$(comm -23 <(echo "$repo") <(echo "$avail"))
   [ -z "$missing" ] || warn "not in the repos, skipped: $(echo $missing)"
   say "installing repo packages (sudo)"
   # shellcheck disable=SC2046
   sudo pacman -S --needed $(comm -12 <(echo "$repo") <(echo "$avail"))
-  aurs=$( (pkglist "$DOT/packages/aur.txt"; pkglist "$HOSTDIR/aur.txt") | sort -u)
+  aurs=$( (pkglist "$DOT/packages/aur.txt"; pkglist "$HOSTDIR/aur.txt"; opt_pkgs aur) | sort -u)
   if [ -n "$aurs" ]; then
     say "AUR packages: $(echo $aurs)"
     if command -v paru >/dev/null; then
@@ -191,6 +249,10 @@ cmd_install_packages() {
 
 cmd_install() {
   [ -d "$HOSTDIR" ] || { warn "no hosts/$HOST yet"; read -r -p ":: create it from the template now? [Y/n] " a; [[ ${a,,} == n* ]] || cmd_new_host "$HOST"; }
+  if [ -n "$(opt_groups)" ]; then
+    say "optional apps (answers are saved in hosts/$HOST/optional.txt)"
+    cmd_optional_ask_only
+  fi
   cmd_install_packages
   say "downloading assets (wallpapers, cursors, mpv scripts, apps)"
   "$DOT/scripts/fetch-assets"
@@ -212,6 +274,16 @@ cmd_install() {
     ~/.config/quickshell/scripts/mocha-theme thumbs >/dev/null || true
   fi
   say "done. Log out and back in (the greeter unlocks the keyring and starts Hyprland)."
+}
+
+# record answers for unasked groups without installing (install happens right after)
+cmd_optional_ask_only() {
+  local g a
+  for g in $(opt_groups); do
+    [ -n "$(opt_state "$g")" ] && continue
+    read -r -p ":: optional: $(opt_desc "$g") — install? [y/N] " a
+    if [[ ${a,,} == y* ]]; then opt_record "$g" yes; else opt_record "$g" no; fi
+  done
 }
 
 cmd_new_host() {
@@ -262,6 +334,8 @@ dot — ~/cachyos-dotfiles on $HOST
   dot pull             pull other machines' changes and relink
   dot add [--host] F…  move file(s) into the repo (common, or this host with --host) and link
   dot packages         snapshot this machine's extra packages into hosts/$HOST
+  dot optional [grp…]  optional apps: ask about new groups, or install the named ones
+                       (--list shows them, --ask asks about all of them again)
   dot new-host [name]  start hosts/<name> from hosts/_template
   dot cd               print the repo path (cd "\$(dot cd)")
 EOF
@@ -277,6 +351,7 @@ case ${1:-help} in
   add) shift; cmd_add "$@" ;;
   packages | pkgs) cmd_packages ;;
   install-packages) cmd_install_packages ;;
+  optional | opt) shift; cmd_optional "$@" ;;
   new-host) shift; cmd_new_host "${1:-}" ;;
   cd | path) echo "$DOT" ;;
   help | -h | --help) cmd_help ;;

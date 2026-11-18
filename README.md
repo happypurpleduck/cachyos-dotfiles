@@ -19,7 +19,9 @@ git clone git@github.com:happypurpleduck/cachyos-dotfiles.git ~/cachyos-dotfiles
 `install` asks for sudo a few times and:
 
 1. offers to create `hosts/<hostname>/` from `hosts/_template` if this machine is new
-2. installs `packages/common.txt` + the host's `packages.txt` (AUR lists via paru, kept minimal)
+2. asks about optional apps (`packages/optional/`, e.g. qBittorrent) — answers are saved per machine —
+   then installs `packages/common.txt`, the host's `packages.txt` and the chosen optional groups
+   (AUR lists via paru, kept minimal)
 3. downloads assets: wallpapers, cursors, mpv scripts/shaders, T3 Code, Zed, mise tools
 4. links the configs with GNU Stow (anything in the way is moved to `~/.local/state/dotfiles-backup/`)
 5. sets up system files: keyring unlock at login, DDC/CI, Chrome theme policy, the Mocha greeter
@@ -35,6 +37,7 @@ dot save "message"  # commit + push (takes back app-replaced files first)
 dot pull            # get the other machines' changes and relink
 dot add <file>      # start tracking a file (shared); --host for this machine only
 dot packages        # snapshot this machine's extra packages
+dot optional        # optional apps: --list, or `dot optional qbittorrent` to install one
 ```
 
 Edits made in `~/.config/...` go straight into the repo, since those files are links.
@@ -46,10 +49,12 @@ common/<app>/       stow packages linked on every machine (paths mirror $HOME)
 hosts/<hostname>/   this machine only:
   home/             linked on top of common (file by file)
   packages.txt      extra repo packages        aur.txt  extra AUR packages
+  optional.txt      optional groups chosen here ("!group" = declined)
   setup             optional script run by `dot install`
   README.md         notes about the hardware
 hosts/_template/    starting point for a new machine (`dot new-host`)
-packages/           common.txt (repo) and aur.txt (AUR) for every machine
+packages/           common.txt (repo) and aur.txt (AUR) for every machine;
+  optional/<group>.txt   opt-in apps ("# description" line, then packages; aur:<name> for AUR)
 seed/               configs apps keep rewriting (btop, waypaper, zed): copied once, not linked
 system/setup        files outside $HOME (run with sudo; idempotent)
 scripts/            fetch-assets (downloads that don't belong in git)
