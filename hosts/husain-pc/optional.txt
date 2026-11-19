@@ -1,0 +1,2 @@
+# husain-pc — optional package groups (dot optional). "!name" = declined.
+qbittorrent

@@ -1,5 +1,5 @@
-# husain-pc — explicitly installed repo packages beyond packages/common.txt.
-# Snapshot from `dot packages` (2026-11-12); edit freely.
+# husain-pc — explicitly installed repo packages beyond packages/common.txt and optional groups.
+# Snapshot from `dot packages` (2026-11-19); edit freely.
 accountsservice
 alacritty
 alsa-firmware

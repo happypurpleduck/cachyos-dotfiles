@@ -33,7 +33,7 @@ hl.env("NVD_BACKEND", "direct")
 -- Scaling for X11 apps: let them draw at the real resolution instead of upscaled
 -- (blurry) when the monitors are scaled; Steam scales its own UI instead.
 hl.config({ xwayland = { force_zero_scaling = true } })
-hl.env("STEAM_FORCE_DESKTOPUI_SCALING", "1.6")
+-- hl.env("STEAM_FORCE_DESKTOPUI_SCALING", "1.6")
 
 return {
 	autostart = function()
