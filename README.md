@@ -83,6 +83,14 @@ transaction ID, rather than leaving the HOME symlinks half-applied. Repeat
 `dot link` is now a precise no-op when the effective targets already match.
 The installer reports changed links and whether a recovery transaction exists.
 
+First-use files from `seed/` are **copied, never symlinked**, as part of the
+same verified home-file transaction as the managed links. Preflight rejects
+missing seed destinations below symlinked or blocked parent directories; existing
+seed destinations (including app-owned files) are left untouched. A rollback
+removes newly created seeds only if their contents remain unchanged, and refuses
+to delete any seed subsequently edited by an application or user. `dot unlink`
+intentionally leaves copy-once application state in place.
+
 Packages installed by pacman/AUR are **not automatically uninstalled**
 on failure; reversing those transactions or root-owned PAM backups requires
 separate user review. Optional assets may remain cached. A greeter is never
