@@ -138,7 +138,7 @@ def archive_files(data: bytes) -> dict[str, bytes]:
                     raise ValueError("oversized decompressed archive")
                 result[p.as_posix()] = z.read(info)
             return result
-    except BadZipFile as exc:
+    except (BadZipFile, RuntimeError, EOFError) as exc:
         raise ValueError("invalid downloaded ZIP") from exc
 
 
@@ -303,7 +303,8 @@ def main() -> int:
                 print(f"{name}: {'installed' if info['installed'] else 'missing'} ({info['path']})")
         return 0
     failures = {}
-    for name in args.asset or NAMES:
+    chosen = args.asset or NAMES
+    for name in chosen:
         if initial[name]["installed"] and not args.force:
             print(f"{name}: already installed, skipped")
             continue
@@ -313,7 +314,7 @@ def main() -> int:
         except (ValueError, OSError, subprocess.SubprocessError) as exc:
             failures[name] = str(exc)
             print(f"!! {name}: {exc}", file=sys.stderr)
-    print(f"optional assets: {len(failures)} failed, {len(NAMES) - len(failures)} without errors")
+    print(f"optional assets: {len(failures)} failed, {len(chosen) - len(failures)} without errors")
     if args.strict or args.asset:
         return 1 if failures else 0
     return 0
