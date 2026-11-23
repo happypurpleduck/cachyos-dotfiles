@@ -28,6 +28,7 @@ with tempfile.TemporaryDirectory() as temp:
         "scripts/effective-targets.py",
         "scripts/dot-doctor.py",
         "scripts/dot-links.py",
+        "scripts/upstream-apps.py",
         "common/bin/.local/bin/dot",
         "install",
     ):
