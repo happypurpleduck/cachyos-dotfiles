@@ -25,3 +25,7 @@ jobs:
         run: |
           python3 -m py_compile scripts/dot-doctor.py tests/test-doctor.py
           python3 tests/test-doctor.py
+      - name: Host-aware file link and rollback regression
+        run: |
+          python3 -m py_compile scripts/dot-links.py tests/test-links.py
+          python3 tests/test-links.py
