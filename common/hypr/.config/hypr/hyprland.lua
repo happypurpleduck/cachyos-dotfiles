@@ -72,8 +72,19 @@ end)
 
 hl.env("XCURSOR_SIZE", "24")
 hl.env("HYPRCURSOR_SIZE", "24")
-hl.env("XCURSOR_THEME", "catppuccin-mocha-dark-cursors")
-hl.env("HYPRCURSOR_THEME", "catppuccin-mocha-dark-cursors")
+-- A failed optional cursor download must not break first login. Adwaita is
+-- supplied by the CachyOS desktop stack and remains the safe fallback.
+local cursorTheme = "Adwaita"
+local cursorHome = os.getenv("HOME")
+if cursorHome then
+  local cursorFile = io.open(cursorHome .. "/.local/share/icons/catppuccin-mocha-dark-cursors/index.theme", "r")
+  if cursorFile then
+    cursorFile:close()
+    cursorTheme = "catppuccin-mocha-dark-cursors"
+  end
+end
+hl.env("XCURSOR_THEME", cursorTheme)
+hl.env("HYPRCURSOR_THEME", cursorTheme)
 
 -- Qt apps follow the generated Mocha palette (qt6ct), GTK apps via gtk.css
 hl.env("QT_QPA_PLATFORMTHEME", "qt6ct")
