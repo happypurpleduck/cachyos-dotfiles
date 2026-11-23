@@ -117,7 +117,10 @@ def report(repo: Path, home: Path, host: str) -> dict:
             "plan": "not performed; system/setup and greeter need independent approval",
             "greeter_activation": "never included in doctor or link dry-run",
         },
-        "assets": __import__("runpy").run_path(str(repo / "scripts/asset-manager.py"))["status"](home),
+        "assets": (
+            __import__("runpy").run_path(str(repo / "scripts/asset-manager.py"))["status"](home)
+            if (repo / "scripts/asset-manager.py").is_file() else {}
+        ),
     }
 
 
