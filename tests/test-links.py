@@ -24,6 +24,8 @@ with tempfile.TemporaryDirectory() as tmp:
             dest.write_bytes((real / path).read_bytes())
         else:
             dest.write_text(value)
+        if path == "common/bin/.local/bin/dot":
+            dest.chmod(0o755)
         return dest
 
     for path in (
