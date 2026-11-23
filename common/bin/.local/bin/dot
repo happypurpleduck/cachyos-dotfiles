@@ -73,7 +73,8 @@ each_file() {
 cmd_link() {
   need python3 python
   if [ "${1:-}" = "--dry-run" ]; then
-    cmd_doctor
+    cmd_doctor --strict
+    python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" --home "$HOME" --dry-run
     return
   fi
   python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" \
@@ -358,7 +359,11 @@ cmd_install_packages() {
 }
 
 cmd_install() {
-  if [ "${1:-}" = "--dry-run" ]; then cmd_doctor; return; fi
+  if [ "${1:-}" = "--dry-run" ]; then
+    cmd_doctor --strict
+    python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" --home "$HOME" --dry-run
+    return
+  fi
   [ -d "$HOSTDIR" ] || { warn "no hosts/$HOST yet"; read -r -p ":: create it from the template now? [Y/n] " a; [[ ${a,,} == n* ]] || cmd_new_host "$HOST"; }
   if [ -n "$(opt_groups)" ]; then
     say "optional apps (answers are saved in hosts/$HOST/optional.txt)"
