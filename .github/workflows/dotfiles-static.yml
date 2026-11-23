@@ -69,3 +69,7 @@ jobs:
         run: |
           python3 -m py_compile tests/test-repository-audit.py
           python3 tests/test-repository-audit.py
+      - name: Host system service gate and Bluetooth fake-root tests
+        run: |
+          python3 -m py_compile scripts/host-services.py tests/test-host-services.py
+          python3 tests/test-host-services.py
