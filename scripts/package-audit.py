@@ -113,9 +113,8 @@ def audit(repo: Path, host: str) -> dict:
     missing_repo = sorted(required - installed)
     missing_aur = sorted(aur - installed)
     unavailable = sorted(set(missing_repo) - repo_available)
-    # CachyOS can ship Shelly instead of paru/yay. Its CLI handles AUR
-    # builds directly, without installing a second helper on fresh systems.
-    helper = shutil.which("shelly") or shutil.which("paru") or shutil.which("yay")
+    # CachyOS Shelly is the only supported AUR backend.
+    helper = shutil.which("shelly")
     return {
         "status": "ok", "desired_repo": sorted(required),
         "desired_aur": sorted(aur), "missing_repo": missing_repo,
@@ -126,11 +125,10 @@ def audit(repo: Path, host: str) -> dict:
 
 
 def aur_install_command(helper: str, packages: list[str]) -> list[str]:
-    """Translate the audited package list to the selected AUR CLI syntax."""
-    if Path(helper).name == "shelly":
-        # Seafoam Labs Shelly CLI: shelly install aur PACKAGE...
-        return [helper, "install", "aur", *packages]
-    return [helper, "-S", "--needed", "--", *packages]
+    """Shelly's explicitly selected AUR install operation; no fallback backend."""
+    if Path(helper).name != "shelly":
+        raise ValueError("only Shelly is supported for AUR installations")
+    return [helper, "install", "aur", *packages]
 
 
 def main() -> int:
@@ -152,13 +150,13 @@ def main() -> int:
             print(f"  repo missing: {', '.join(data['missing_repo']) or 'none'}")
             print(f"  AUR missing: {', '.join(data['missing_aur']) or 'none'}")
             print(f"  repo unavailable: {', '.join(data['unavailable_repo']) or 'none'}")
-            print(f"  AUR helper: {data['aur_helper'] or 'unavailable'}")
+            print(f"  Shelly CLI: {data['aur_helper'] or 'unavailable'}")
             if data["blocking"]:
                 if data["unavailable_repo"]:
                     print("  BLOCKED: required repository packages are unavailable")
                 elif data["missing_aur"] and not data["aur_helper"]:
-                    print("  BLOCKED: no supported AUR CLI (shelly, paru or yay); "
-                          "install missing AUR packages with a reviewed tool")
+                    print("  BLOCKED: Shelly CLI is required for reviewed AUR packages "
+                          "(install the official CachyOS shelly package)")
                 else:
                     print("  BLOCKED: pacman unavailable")
         if data["blocking"]:

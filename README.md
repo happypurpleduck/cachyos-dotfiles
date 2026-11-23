@@ -269,14 +269,14 @@ service, and host-selected `google-chrome` for Chrome. No other AUR
 package may be introduced without a separate review and policy update.
 An AUR installer is never invoked unattended; the installer displays
 the pending exceptions and requires typing `APPROVE AUR` before proceeding.
-CachyOS machines with **Shelly** can install the approved AUR exceptions
-directly through Shelly's existing CLI (`shelly install aur <package>`);
-the installer detects Shelly first, then falls back to `paru` or `yay`.
-It does **not** install an extra AUR helper or run arbitrary build scripts
-automatically. If no supported AUR CLI is installed and a required AUR
-package is missing, the audit blocks with guidance; unavailable repository
-packages also block rather than being silently skipped. Selected optional
-groups and host packages remain isolated to their host. `dot doctor`
+**Shelly is the only supported AUR manager.** The installer uses
+`shelly install aur <package>` for allowlisted exceptions and does not
+attempt another AUR backend. A missing Shelly CLI blocks installation
+before any package changes, with guidance to install `shelly` from the
+official CachyOS repository. AUR installations still require explicit
+`APPROVE AUR` confirmation and Shelly's own PKGBUILD review. Unavailable
+repository packages also block rather than being silently skipped. Selected
+optional groups and host packages remain isolated to their host. `dot doctor`
 uses the same audit.
 
 Shared Zsh aliases explicitly require `eza`, `bat`, and `fd`, and the
@@ -357,7 +357,7 @@ references a different user's wallpaper file.
 1. requires explicit `dot confirm-host` enrollment (create the host profile first if this machine is new)
 2. asks about optional apps (`packages/optional/`, e.g. qBittorrent) — answers are saved per machine —
    then installs `packages/common.txt`, the host's `packages.txt` and the chosen optional groups
-   (AUR lists via paru, kept minimal)
+   (reviewed AUR exceptions via Shelly only)
 3. attempts optional assets: wallpapers, cursors, mpv scripts/shaders and T3 Code (failures are reported but do not block linking; Zed/mise are package-managed)
 4. links the effective per-host files transactionally (blocking existing collisions unless explicitly approved)
 5. **skips system-level changes by default**; pass `--apply-system` to opt into limited PAM/DDC setup

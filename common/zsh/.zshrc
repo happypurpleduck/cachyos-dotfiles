@@ -76,7 +76,7 @@ alias lt='eza --tree --level=2 --icons=auto'
 alias cat='bat --paging=never --style=plain'
 alias v='nvim'
 alias lg='lazygit'
-alias update='sudo pacman -Syu && paru -Sua'   # repos, then AUR packages
+alias update='shelly upgrade all'   # system and AUR updates through Shelly
 
 # ── mise (runtimes and global tools such as claude) ─────────────────
 if [[ -x "$HOME/.local/bin/mise" ]]; then

@@ -122,7 +122,6 @@ opencl-nvidia
 openssh
 os-prober
 pacman-contrib
-paru
 perl
 pipewire-alsa
 pkgfile

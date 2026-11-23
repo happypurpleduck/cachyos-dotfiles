@@ -46,16 +46,18 @@ if args==["-Qq"]:
     print(installed.read_text(),end="")
 elif args==["-Slq"]:
     print(available.read_text(),end="")
-elif (name=="shelly" and args[:2]==["install","aur"]) or args[:1]==["-S"]:
-    pkgs=args[2:] if name=="shelly" else [v for v in args if not v.startswith("-") and v not in ("-S",)]
+elif name=="shelly" and args[:2]==["install","aur"]:
+    with installed.open("a") as f:
+        for p in args[2:]: f.write(p+"\n")
+    Path(os.environ["MOCK_SHELLY_INVOCATIONS"]).write_text(" ".join(args))
+elif name=="pacman" and args[:1]==["-S"]:
+    pkgs=[v for v in args if not v.startswith("-") and v not in ("-S",)]
     with installed.open("a") as f:
         for p in pkgs: f.write(p+"\n")
-    if name=="shelly":
-        Path(os.environ["MOCK_SHELLY_INVOCATIONS"]).write_text(" ".join(args))
 else:
     raise SystemExit(f"unexpected {name}: {args}")
 '''
-    for tool in ("pacman", "paru", "sudo"):
+    for tool in ("pacman", "shelly", "sudo"):
         path = binpath / tool
         path.write_text(shim)
         path.chmod(0o755)
@@ -91,17 +93,17 @@ else:
     assert "repo missing: none" in audit().stdout
 
     installed.write_text("git\n")
-    (binpath / "paru").unlink()
+    (binpath / "shelly").unlink()
     assert "BLOCKED" in audit(ok=False).stdout
+    assert "Shelly CLI is required" in audit(ok=False).stdout
     audit("--install", ok=False)
-    assert installed.read_text() == "git\n", "blocked audit installed partial packages"
+    assert installed.read_text() == "git\n", "missing Shelly installed packages"
 
-    # A fresh CachyOS install often has Shelly but no paru/yay. Do not make
-    # installing another helper a prerequisite to audited AUR exceptions.
+    # A CachyOS install with only Shelly can install explicit AUR exceptions.
     (binpath / "shelly").write_text(shim)
     (binpath / "shelly").chmod(0o755)
     shelly_report = audit()
-    assert "AUR helper: " in shelly_report.stdout
+    assert "Shelly CLI: " in shelly_report.stdout
     assert "shelly" in shelly_report.stdout
     audit("--install", ok=False)
     assert installed.read_text() == "git\n", "Shelly bypassed required AUR approval"
@@ -113,8 +115,8 @@ else:
     installed.write_text("git\n")
     assert "BLOCKED" in audit(ok=False).stdout
 
-    (binpath / "paru").write_text(shim)
-    (binpath / "paru").chmod(0o755)
+    (binpath / "shelly").write_text(shim)
+    (binpath / "shelly").chmod(0o755)
     available.write_text("git\neza\nbat\n")  # fd/krita unavailable: block
     assert "repo unavailable: fd, krita" in audit(ok=False).stdout
     audit("--install", ok=False)
@@ -134,4 +136,4 @@ else:
     # Declined groups do not become attempted packages, unknown chosen groups fail.
     (repo / "hosts/A/optional.txt").write_text("nonexistent\n")
     assert "unknown optional group" in audit(ok=False).stderr
-print("package gates: missing AUR tool / repo availability / explicit install: OK")
+print("package gates: Shelly-only AUR, missing CLI, repo availability and consent: OK")
