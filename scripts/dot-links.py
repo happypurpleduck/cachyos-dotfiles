@@ -260,6 +260,10 @@ def apply(repo: Path, home: Path, host: str, *, backup_conflicts=False,
     if dry_run:
         print("Dry run: no files changed")
         return 0
+    # No journal, backup or manifest write for an already consistent host.
+    if not actions and old == desired and state_path(home, host).is_file():
+        print("Already linked: 0 changes; no-op")
+        return 0
 
     prior = state_path(home, host)
     verify_no_parent_symlinks(home, prior)
