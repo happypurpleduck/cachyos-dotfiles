@@ -269,11 +269,15 @@ service, and host-selected `google-chrome` for Chrome. No other AUR
 package may be introduced without a separate review and policy update.
 An AUR installer is never invoked unattended; the installer displays
 the pending exceptions and requires typing `APPROVE AUR` before proceeding.
-A missing mandatory AUR package without an installed `paru` or `yay`
-blocks installation with an actionable message. An unavailable repo package
-also blocks rather than silently continuing. Install an AUR helper from the
-trusted CachyOS setup before retrying. Selected optional groups and host
-packages are isolated to their host. `dot doctor` uses the same audit.
+CachyOS machines with **Shelly** can install the approved AUR exceptions
+directly through Shelly's existing CLI (`shelly install aur <package>`);
+the installer detects Shelly first, then falls back to `paru` or `yay`.
+It does **not** install an extra AUR helper or run arbitrary build scripts
+automatically. If no supported AUR CLI is installed and a required AUR
+package is missing, the audit blocks with guidance; unavailable repository
+packages also block rather than being silently skipped. Selected optional
+groups and host packages remain isolated to their host. `dot doctor`
+uses the same audit.
 
 Shared Zsh aliases explicitly require `eza`, `bat`, and `fd`, and the
 installer now declares those packages. After linking, a missing Hokum systemd

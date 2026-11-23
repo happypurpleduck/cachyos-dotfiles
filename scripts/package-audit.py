@@ -113,7 +113,9 @@ def audit(repo: Path, host: str) -> dict:
     missing_repo = sorted(required - installed)
     missing_aur = sorted(aur - installed)
     unavailable = sorted(set(missing_repo) - repo_available)
-    helper = shutil.which("paru") or shutil.which("yay")
+    # CachyOS can ship Shelly instead of paru/yay. Its CLI handles AUR
+    # builds directly, without installing a second helper on fresh systems.
+    helper = shutil.which("shelly") or shutil.which("paru") or shutil.which("yay")
     return {
         "status": "ok", "desired_repo": sorted(required),
         "desired_aur": sorted(aur), "missing_repo": missing_repo,
@@ -121,6 +123,14 @@ def audit(repo: Path, host: str) -> dict:
         "aur_helper": helper,
         "blocking": bool(unavailable or (missing_aur and not helper)),
     }
+
+
+def aur_install_command(helper: str, packages: list[str]) -> list[str]:
+    """Translate the audited package list to the selected AUR CLI syntax."""
+    if Path(helper).name == "shelly":
+        # Seafoam Labs Shelly CLI: shelly install aur PACKAGE...
+        return [helper, "install", "aur", *packages]
+    return [helper, "-S", "--needed", "--", *packages]
 
 
 def main() -> int:
@@ -144,7 +154,13 @@ def main() -> int:
             print(f"  repo unavailable: {', '.join(data['unavailable_repo']) or 'none'}")
             print(f"  AUR helper: {data['aur_helper'] or 'unavailable'}")
             if data["blocking"]:
-                print("  BLOCKED: install package helper / fix package declarations")
+                if data["unavailable_repo"]:
+                    print("  BLOCKED: required repository packages are unavailable")
+                elif data["missing_aur"] and not data["aur_helper"]:
+                    print("  BLOCKED: no supported AUR CLI (shelly, paru or yay); "
+                          "install missing AUR packages with a reviewed tool")
+                else:
+                    print("  BLOCKED: pacman unavailable")
         if data["blocking"]:
             return 2
         if args.install and data["missing_aur"] and not args.approve_aur:
@@ -157,8 +173,8 @@ def main() -> int:
                 subprocess.run(["sudo", "pacman", "-S", "--needed", "--",
                                 *data["missing_repo"]], check=True)
             if data["missing_aur"]:
-                subprocess.run([data["aur_helper"], "-S", "--needed", "--",
-                                *data["missing_aur"]], check=True)
+                subprocess.run(aur_install_command(data["aur_helper"],
+                                                   data["missing_aur"]), check=True)
             verified = audit(args.repo.resolve(strict=True), args.host)
             if verified["missing_repo"] or verified["missing_aur"]:
                 raise ValueError("package manager reported success but required packages remain absent")

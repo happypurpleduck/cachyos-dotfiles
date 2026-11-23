@@ -46,10 +46,12 @@ if args==["-Qq"]:
     print(installed.read_text(),end="")
 elif args==["-Slq"]:
     print(available.read_text(),end="")
-elif args[:1]==["-S"]:
-    pkgs=[v for v in args if not v.startswith("-") and v not in ("-S",)]
+elif (name=="shelly" and args[:2]==["install","aur"]) or args[:1]==["-S"]:
+    pkgs=args[2:] if name=="shelly" else [v for v in args if not v.startswith("-") and v not in ("-S",)]
     with installed.open("a") as f:
         for p in pkgs: f.write(p+"\n")
+    if name=="shelly":
+        Path(os.environ["MOCK_SHELLY_INVOCATIONS"]).write_text(" ".join(args))
 else:
     raise SystemExit(f"unexpected {name}: {args}")
 '''
@@ -57,8 +59,10 @@ else:
         path = binpath / tool
         path.write_text(shim)
         path.chmod(0o755)
+    shelly_commands = root / "shelly-invocations"
     env = {
         **os.environ,
+        "MOCK_SHELLY_INVOCATIONS": str(shelly_commands),
         "MOCK_INSTALLED": str(installed),
         "MOCK_AVAILABLE": str(available),
         "PATH": str(binpath) + os.pathsep + os.environ["PATH"],
@@ -91,6 +95,23 @@ else:
     assert "BLOCKED" in audit(ok=False).stdout
     audit("--install", ok=False)
     assert installed.read_text() == "git\n", "blocked audit installed partial packages"
+
+    # A fresh CachyOS install often has Shelly but no paru/yay. Do not make
+    # installing another helper a prerequisite to audited AUR exceptions.
+    (binpath / "shelly").write_text(shim)
+    (binpath / "shelly").chmod(0o755)
+    shelly_report = audit()
+    assert "AUR helper: " in shelly_report.stdout
+    assert "shelly" in shelly_report.stdout
+    audit("--install", ok=False)
+    assert installed.read_text() == "git\n", "Shelly bypassed required AUR approval"
+    assert not shelly_commands.exists(), "Shelly executed before approval"
+    audit("--install", "--approve-aur")
+    assert shelly_commands.read_text() == "install aur hokum-bin mock-aura"
+    assert "repo missing: none" in audit().stdout
+    (binpath / "shelly").unlink()
+    installed.write_text("git\n")
+    assert "BLOCKED" in audit(ok=False).stdout
 
     (binpath / "paru").write_text(shim)
     (binpath / "paru").chmod(0o755)
