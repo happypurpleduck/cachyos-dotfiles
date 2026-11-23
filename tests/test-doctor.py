@@ -27,6 +27,7 @@ with tempfile.TemporaryDirectory() as temp:
     for source in (
         "scripts/effective-targets.py",
         "scripts/dot-doctor.py",
+        "scripts/dot-links.py",
         "common/bin/.local/bin/dot",
         "install",
     ):
@@ -39,7 +40,14 @@ with tempfile.TemporaryDirectory() as temp:
     override = repo / "hosts/A/home/.config/app/settings.conf"
     override.parent.mkdir(parents=True, exist_ok=True)
     override.write_text("A settings\n")
-    (repo / "packages/common.txt").write_text("git\n")
+    (repo / "packages/common.txt").write_text("git\n".replace("\n", "\n"))
+    # The dry-run packages step must not depend on the CI runner's pacman.
+    (repo / "scripts/package-audit.py").write_text(
+        "def audit(repo, host):\n"
+        "    return {'status': 'ok', 'missing_repo': [], 'missing_aur': [],"
+        " 'blocking': False}\n"
+        "if __name__ == '__main__': print('fake package preview')\n"
+    )
     subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
     subprocess.run(["git", "-C", str(repo), "add", "--all"], check=True)
 
@@ -99,7 +107,24 @@ with tempfile.TemporaryDirectory() as temp:
             assert result.returncode == 0, (command, result.stderr, result.stdout)
         else:
             assert result.returncode != 0, (command, result.stderr, result.stdout)
-        assert "folded-parent" in result.stdout, (command, result.stdout)
+        combined = result.stdout + result.stderr
+        assert "folded-parent" in combined, (command, combined)
         assert not (home / ".local").exists(), "dry-run modified the home"
+
+    # Stock ordinary configs are automatically backup-eligible, not fatal in
+    # install dry-run. The dry run still must not create backup directories.
+    (home / ".config/app").unlink()
+    (home / ".config/app").mkdir()
+    target.write_text("stock app configuration")
+    for command in (
+        [str(repo / "common/bin/.local/bin/dot"), "install", "--dry-run"],
+        ["bash", str(repo / "install"), "--dry-run"],
+    ):
+        result = subprocess.run(command, env=env, text=True, capture_output=True)
+        assert result.returncode == 0, (command, result.stderr, result.stdout)
+        assert "1 existing home config" in result.stdout
+        assert "Dry run: no files changed" in result.stdout
+        assert target.read_text() == "stock app configuration"
+        assert not (home / ".local").exists(), "dry-run created a transaction"
 
 print("doctor and bootstrap dry-run are read-only: OK")
