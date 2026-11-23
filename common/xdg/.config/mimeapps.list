@@ -1,12 +1,5 @@
 [Default Applications]
-x-scheme-handler/claude-cli=claude-code-url-handler.desktop
 inode/directory=org.gnome.Nautilus.desktop
-text/html=google-chrome.desktop
-x-scheme-handler/http=google-chrome.desktop
-x-scheme-handler/https=google-chrome.desktop
-x-scheme-handler/about=google-chrome.desktop
-x-scheme-handler/unknown=google-chrome.desktop
-application/xhtml+xml=google-chrome.desktop
 video/mp4=mpv.desktop
 video/x-matroska=mpv.desktop
 video/webm=mpv.desktop
@@ -16,17 +9,6 @@ video/mpeg=mpv.desktop
 video/x-flv=mpv.desktop
 video/ogg=mpv.desktop
 audio/x-matroska=mpv.desktop
-text/plain=dev.zed.Zed.desktop
-text/markdown=dev.zed.Zed.desktop
-text/x-csrc=dev.zed.Zed.desktop
-text/x-c++src=dev.zed.Zed.desktop
-text/x-python=dev.zed.Zed.desktop
-text/x-shellscript=dev.zed.Zed.desktop
-application/json=dev.zed.Zed.desktop
-application/x-yaml=dev.zed.Zed.desktop
-application/toml=dev.zed.Zed.desktop
-text/x-lua=dev.zed.Zed.desktop
-x-scheme-handler/t3code=com.t3tools.T3Code.desktop
 
 image/png=org.gnome.Loupe.desktop
 image/jpeg=org.gnome.Loupe.desktop
