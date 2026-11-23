@@ -46,7 +46,7 @@ with tempfile.TemporaryDirectory() as tmp:
         "case \"$cmd\" in\n"
         "  is-enabled|is-active)\n"
         "    grep -qx \"$unit\" \"$MOCK_SERVICES\" && exit 0 || exit 1 ;;\n"
-        "  enable) printf '%s\\n' \"$unit\" > \"$MOCK_SERVICES\"; if [ "${MOCK_FAIL_GREETD:-0}" = 1 ] && [ "$unit" = greetd.service ]; then exit 1; fi; exit 0 ;;\n"
+        "  enable) printf '%s\\n' \"$unit\" > \"$MOCK_SERVICES\"; if [ \"${MOCK_FAIL_GREETD:-0}\" = 1 ] && [ \"$unit\" = greetd.service ]; then exit 1; fi; exit 0 ;;\n"
         "  disable) sed -i \"/^$unit$/d\" \"$MOCK_SERVICES\"; exit 0 ;;\n"
         "esac\nexit 2\n"
     )
