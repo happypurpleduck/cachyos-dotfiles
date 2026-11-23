@@ -70,11 +70,13 @@ def preview(repo: Path, host: str, home: Path, *, apply=False) -> dict:
             archive.extractall(staged, filter="data")
         git(staged, "init", "-q")
         git(staged, "add", "-A")
-        planner = staged / "scripts/effective-targets.py"
+        # Execute ONLY currently trusted local preflight code. Remote Git
+        # archives are untrusted data and must never provide runnable scripts.
         current = repo / "scripts/effective-targets.py"
-        if planner.is_file() and current.is_file():
-            prospective = runpy.run_path(str(planner))["plan"](staged, host)
-            existing = runpy.run_path(str(current))["plan"](repo, host)
+        if current.is_file():
+            planner = runpy.run_path(str(current))["plan"]
+            prospective = planner(staged, host)
+            existing = planner(repo, host)
             existing_paths = {entry.path for entry in existing}
             # A remote newly managed target must not replace a local app
             # file/symlink or sit under a legacy folded Stow directory.
@@ -96,7 +98,7 @@ def preview(repo: Path, host: str, home: Path, *, apply=False) -> dict:
                p.startswith(f"hosts/{host}/aur.txt") or
                p.startswith(f"hosts/{host}/optional.txt")
                for p in active):
-            auditor = staged / "scripts/package-audit.py"
+            auditor = repo / "scripts/package-audit.py"
             if auditor.is_file():
                 audit = runpy.run_path(str(auditor))["audit"](staged, host)
                 if audit["blocking"]:
