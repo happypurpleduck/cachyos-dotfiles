@@ -93,7 +93,12 @@ with tempfile.TemporaryDirectory() as temp:
         ["bash", str(repo / "install"), "--dry-run"],
     ):
         result = subprocess.run(command, env=env, text=True, capture_output=True)
-        assert result.returncode == 0, (command, result.stderr, result.stdout)
+        # Report-only doctor remains zero for observation; installer and link
+        # dry-runs must fail closed on blocking collisions.
+        if "doctor" in command:
+            assert result.returncode == 0, (command, result.stderr, result.stdout)
+        else:
+            assert result.returncode != 0, (command, result.stderr, result.stdout)
         assert "folded-parent" in result.stdout, (command, result.stdout)
         assert not (home / ".local").exists(), "dry-run modified the home"
 
