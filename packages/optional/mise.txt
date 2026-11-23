@@ -1,2 +1,0 @@
-# mise runtime manager from the CachyOS/Arch repository
-mise
