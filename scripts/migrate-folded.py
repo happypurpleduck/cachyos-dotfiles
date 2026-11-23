@@ -51,11 +51,13 @@ def relative(home: Path, path: Path) -> str:
     return path.relative_to(home).as_posix()
 
 
-def directory_contents(source: Path, target: Path, home: Path) -> dict[str, str]:
+def directory_contents(source: Path, target: Path, home: Path) -> tuple[dict[str, str], list[str]]:
     """Map all files visible through an old folded symlink, including ignored."""
     result: dict[str, str] = {}
+    directories: set[str] = set()
     for root, dirs, files in os.walk(source, followlinks=False):
         current = Path(root)
+        directories.add(relative(home, target / current.relative_to(source)))
         for dirname in list(dirs):
             child = current / dirname
             if child.is_symlink():
@@ -64,7 +66,7 @@ def directory_contents(source: Path, target: Path, home: Path) -> dict[str, str]
         for filename in files:
             child = current / filename
             result[relative(home, target / child.relative_to(source))] = str(child)
-    return result
+    return result, sorted(directories, key=lambda p: (len(Path(p).parts), p))
 
 
 def discover(repo: Path, home: Path, host: str) -> list[dict]:
@@ -98,7 +100,7 @@ def discover(repo: Path, home: Path, host: str) -> list[dict]:
             continue
         source = candidates[root]
         raw_link = os.readlink(root)
-        files = directory_contents(source, root, home)
+        files, source_dirs = directory_contents(source, root, home)
         for entry in entries:
             dest = home / entry.path
             if within(dest, root):
@@ -113,10 +115,17 @@ def discover(repo: Path, home: Path, host: str) -> list[dict]:
                         f"nested file/parent collision during migration: {current}"
                     )
                 current = current.parent
+        all_dirs = set(source_dirs)
+        for file in files:
+            parent = Path(file).parent
+            while within(home / parent, root):
+                all_dirs.add(parent.as_posix())
+                parent = parent.parent
         selected.append({
             "path": relative(home, root),
             "source": str(source),
             "raw_link": raw_link,
+            "directories": sorted(all_dirs, key=lambda p: (len(Path(p).parts), p)),
             "files": [{"path": key, "source": value}
                       for key, value in sorted(files.items())],
         })
@@ -141,14 +150,15 @@ def verify_root(home: Path, item: dict) -> bool:
     if not root.is_dir() or root.is_symlink():
         raise ValueError(f"modified migrated directory: {root}")
     expected = {x["path"]: Path(x["source"]) for x in item["files"]}
-    seen: set[str] = set()
+    allowed_directories = set(item["directories"])
     for parent, dirs, files in os.walk(root, followlinks=False):
         for name in dirs + files:
             child = Path(parent) / name
             rel = relative(home, child)
             if child.is_dir() and not child.is_symlink():
+                if rel not in allowed_directories:
+                    raise ValueError(f"new user directory since migration: {child}")
                 continue
-            seen.add(rel)
             if rel not in expected:
                 raise ValueError(f"new user file since migration; refusing: {child}")
             if (not child.is_symlink() or
@@ -238,6 +248,8 @@ def migrate(repo: Path, home: Path, host: str, apply: bool) -> int:
                 raise ValueError(f"folder changed while planning: {root}")
             root.unlink()
             root.mkdir()
+            for dirname in item["directories"]:
+                (home / dirname).mkdir(parents=True, exist_ok=True)
             for entry in item["files"]:
                 dest = home / entry["path"]
                 dest.parent.mkdir(parents=True, exist_ok=True)
