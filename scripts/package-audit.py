@@ -33,8 +33,8 @@ def requirements(repo: Path, host: str) -> tuple[set[str], set[str]]:
     run_path(str(repo / "scripts/effective-targets.py"))["plan"](repo, host)
     required = read_packages(repo / "packages/common.txt")
     required |= read_packages(repo / "hosts" / host / "packages.txt")
-    aur = read_packages(repo / "packages/aur.txt")
-    aur |= read_packages(repo / "hosts" / host / "aur.txt")
+    common_aur = read_packages(repo / "packages/aur.txt")
+    aur = common_aur | read_packages(repo / "hosts" / host / "aur.txt")
     optional_path = repo / "hosts" / host / "optional.txt"
     # '!' records declined optional groups, not package names.
     selected: set[str] = set()
@@ -54,6 +54,22 @@ def requirements(repo: Path, host: str) -> tuple[set[str], set[str]]:
             (aur if item.startswith("aur:") else required).add(
                 item.removeprefix("aur:")
             )
+    # Every AUR dependency must be an explicit, reviewed exception.
+    policy_path = repo / "packages/aur-exceptions.json"
+    if aur and not policy_path.is_file():
+        raise ValueError("AUR exception policy is missing; refusing all AUR packages")
+    exceptions = json.loads(policy_path.read_text(encoding="utf-8")) if policy_path.is_file() else {}
+    if not isinstance(exceptions, dict):
+        raise ValueError("invalid AUR exception policy format")
+    for name in sorted(aur):
+        record = exceptions.get(name)
+        if (not isinstance(record, dict)
+                or record.get("scope") not in ("common", "host")
+                or not record.get("reason") or not record.get("review")):
+            raise ValueError(f"unapproved AUR package '{name}': document an explicit exception first")
+        if name in common_aur and record["scope"] != "common":
+            raise ValueError(f"AUR package '{name}' is host-only; cannot enable globally")
+
     overlap = required & aur
     if overlap:
         raise ValueError("declared in repo and AUR lists: " + ", ".join(sorted(overlap)))
@@ -109,6 +125,8 @@ def main() -> int:
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--install", action="store_true",
                         help="install audited missing packages (explicit opt-in)")
+    parser.add_argument("--approve-aur", action="store_true",
+                        help="explicitly permit allowlisted AUR exception installs")
     args = parser.parse_args()
     try:
         data = audit(args.repo.resolve(strict=True), args.host)
@@ -124,6 +142,11 @@ def main() -> int:
                 print("  BLOCKED: install package helper / fix package declarations")
         if data["blocking"]:
             return 2
+        if args.install and data["missing_aur"] and not args.approve_aur:
+            raise ValueError(
+                "AUR packages require explicit --approve-aur after PKGBUILD review: "
+                + ", ".join(data["missing_aur"])
+            )
         if args.install:
             if data["missing_repo"]:
                 subprocess.run(["sudo", "pacman", "-S", "--needed", "--",

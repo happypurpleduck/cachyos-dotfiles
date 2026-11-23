@@ -18,6 +18,10 @@ with tempfile.TemporaryDirectory() as tmp:
     (repo / "common/app/.config/app/config").write_text("shared")
     (repo / "packages/common.txt").write_text("git\neza\nbat\nfd\n")
     (repo / "packages/aur.txt").write_text("hokum-bin\n")
+    (repo / "packages/aur-exceptions.json").write_text(
+        '{"hokum-bin":{"scope":"common","reason":"core daemon","review":"review PKGBUILD"},'
+        '"mock-aura":{"scope":"host","reason":"fixture","review":"review fixture"}}'
+    )
     (repo / "hosts/A/optional.txt").write_text("!qbittorrent\nphoto\n")
     (repo / "packages/optional/photo.txt").write_text("# Optional\nkrita\naur:mock-aura\n")
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
@@ -74,7 +78,9 @@ else:
 
     assert "repo missing: bat, eza, fd, krita" in audit().stdout
     assert "AUR missing: hokum-bin, mock-aura" in audit().stdout
-    audit("--install")
+    audit("--install", ok=False)
+    assert installed.read_text() == "git\n", "AUR installed without explicit approval"
+    audit("--install", "--approve-aur")
     assert set(installed.read_text().split()) == {
         "git", "eza", "bat", "fd", "krita", "hokum-bin", "mock-aura"
     }
@@ -92,6 +98,10 @@ else:
     assert "repo unavailable: fd, krita" in audit(ok=False).stdout
     audit("--install", ok=False)
     assert installed.read_text() == "git\n"
+
+    (repo / "hosts/A/aur.txt").write_text("random-unapproved-bin\n")
+    assert "unapproved AUR package" in audit(ok=False).stderr
+    (repo / "hosts/A/aur.txt").unlink()
 
     # Declined groups do not become attempted packages, unknown chosen groups fail.
     (repo / "hosts/A/optional.txt").write_text("nonexistent\n")

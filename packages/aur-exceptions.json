@@ -1,0 +1,14 @@
+{
+  "hokum-bin": {
+    "scope": "common",
+    "reason": "Primary Wayland notification daemon and user service. Exception retained until a fully tested upstream binary plus DBus/systemd integration replaces the package.",
+    "source": "anomalyco/hokum official upstream release packaging",
+    "review": "Inspect the AUR PKGBUILD and binary source when installing/updating."
+  },
+  "google-chrome": {
+    "scope": "host",
+    "reason": "Host-selected full Chrome browser; upstream Google binary distributed by an AUR packaging recipe.",
+    "source": "Google upstream browser binary; community-maintained AUR recipe",
+    "review": "Review the AUR PKGBUILD; an upstream binary publisher is not an endorsement of the packaging recipe."
+  }
+}

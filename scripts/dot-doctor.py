@@ -121,6 +121,10 @@ def report(repo: Path, home: Path, host: str) -> dict:
             __import__("runpy").run_path(str(repo / "scripts/asset-manager.py"))["status"](home)
             if (repo / "scripts/asset-manager.py").is_file() else {}
         ),
+        "upstream_apps": (
+            __import__("runpy").run_path(str(repo / "scripts/upstream-apps.py"))["status"](home)
+            if (repo / "scripts/upstream-apps.py").is_file() else {}
+        ),
     }
 
 
@@ -158,6 +162,11 @@ def main() -> int:
         missing_assets = [name for name, asset in data["assets"].items()
                           if not asset["installed"]]
         print("  optional assets missing: " + (", ".join(missing_assets) or "none"))
+        for name, app in data["upstream_apps"].items():
+            mode = "upstream/self-managed" if app["upstream_managed"] else (
+                "other manager" if app["installed"] else "missing"
+            )
+            print(f"  {name}: {mode} (dot apps status)")
         print("  system: existing display manager "
               f"{data['system_changes']['display_manager']} (unchanged)")
         print("  dry run only: no links, packages, services, backups, or /etc modifications")

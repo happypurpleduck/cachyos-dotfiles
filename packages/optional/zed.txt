@@ -1,2 +1,0 @@
-# Zed editor from the CachyOS/Arch repository (no remote curl|sh installer)
-zed
