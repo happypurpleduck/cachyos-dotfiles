@@ -12,6 +12,7 @@ import json
 import hashlib
 import os
 from pathlib import Path
+import platform
 import re
 import shutil
 import subprocess
@@ -104,8 +105,10 @@ def download(url: str, max_size: int, attempts: int = 3) -> bytes:
         raise ValueError("only HTTPS asset downloads are permitted")
     for attempt in range(attempts):
         try:
+            accept = ("application/vnd.github+json" if url.startswith("https://api.github.com/")
+                      else "application/octet-stream")
             request = Request(url, headers={"User-Agent": "cachyos-dotfiles/1",
-                                            "Accept": "application/octet-stream"})
+                                            "Accept": accept})
             with urlopen(request, timeout=35) as response:
                 length = response.headers.get("Content-Length")
                 if length and int(length) > max_size:
@@ -284,7 +287,17 @@ def install_zip_group(home: Path, name: str) -> None:
     promote_zip_group(mpv, selected, name)
 
 
-def nightly_asset(releases: object) -> tuple[str, str]:
+def appimage_architecture(machine: str) -> tuple[str, int]:
+    """Return upstream release filename suffix and the matching ELF e_machine."""
+    if machine in ("x86_64", "amd64"):
+        return "-x86_64.AppImage", 62
+    if machine in ("aarch64", "arm64"):
+        return "-arm64.AppImage", 183
+    raise ValueError(f"unsupported T3 Code AppImage architecture: {machine}")
+
+
+def nightly_asset(releases: object, machine: str | None = None) -> tuple[str, str]:
+    suffix, _ = appimage_architecture(machine or platform.machine())
     if not isinstance(releases, list):
         raise ValueError("GitHub release API returned a non-list response (rate limit?)")
     for release in releases:
@@ -298,29 +311,41 @@ def nightly_asset(releases: object) -> tuple[str, str]:
         for asset in assets:
             name = asset.get("name", "") if isinstance(asset, dict) else ""
             url = asset.get("browser_download_url", "") if isinstance(asset, dict) else ""
-            if (re.fullmatch(r"[A-Za-z0-9._-]+\.AppImage", name)
-                    and url.startswith(f"https://github.com/pingdotgg/t3code/releases/download/{tag}/")):
+            if (isinstance(name, str) and name.endswith(suffix)
+                    and re.fullmatch(r"[A-Za-z0-9._-]+\.AppImage", name)
+                    and url == f"https://github.com/pingdotgg/t3code/releases/download/{tag}/{name}"):
                 return tag, url
-        # Legacy update YAML: verify tag and all path characters before use.
-        yml = (f"https://github.com/pingdotgg/t3code/releases/download/"
-               f"{tag}/nightly-linux.yml")
+        # Electron's legacy updater YAML can name an AppImage that the release
+        # metadata did not list; only accept the matching machine architecture.
+        yaml_name = "nightly-linux-arm64.yml" if suffix.startswith("-arm64") else "nightly-linux.yml"
+        yml = f"https://github.com/pingdotgg/t3code/releases/download/{tag}/{yaml_name}"
         try:
             body = download(yml, 128 * 1024).decode("utf-8")
         except (ValueError, UnicodeError):
             continue
         m = re.search(r"^path:\s*([A-Za-z0-9._-]+\.AppImage)\s*$",
                       body, flags=re.MULTILINE)
-        if m:
+        if m and m.group(1).endswith(suffix):
             return tag, f"https://github.com/pingdotgg/t3code/releases/download/{tag}/{m.group(1)}"
-    raise ValueError("no valid T3 Code Linux nightly AppImage found; optional asset skipped")
+    raise ValueError("no matching T3 Code nightly AppImage for this architecture")
+
+
+def validate_appimage(data: bytes, machine: str) -> None:
+    _, elf_machine = appimage_architecture(machine)
+    if (len(data) < 100 * 1024 or data[:4] != b"\x7fELF"
+            or data[4] != 2 or data[5] not in (1, 2)):
+        raise ValueError("download is not a plausible 64-bit Linux AppImage")
+    byteorder = "little" if data[5] == 1 else "big"
+    if int.from_bytes(data[18:20], byteorder) != elf_machine:
+        raise ValueError(f"downloaded AppImage is for a different CPU architecture ({machine})")
 
 
 def install_t3code(home: Path) -> None:
+    machine = platform.machine()
     releases = json.loads(download(NIGHTLIES, 4 * 1024 * 1024))
-    tag, url = nightly_asset(releases)
+    tag, url = nightly_asset(releases, machine)
     data = download(url, 600 * 1024 * 1024)
-    if not data.startswith(b"\x7fELF") or len(data) < 100 * 1024:
-        raise ValueError("download is not a plausible Linux AppImage")
+    validate_appimage(data, machine)
     target = locations(home)["t3code"]
     atomic_file(target, data, executable=True)
     atomic_file(target.parent / ".version.json",
