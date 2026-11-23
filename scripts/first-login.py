@@ -69,11 +69,12 @@ def first_login(home: Path, script: Path) -> dict:
     module["save_state"](st)
     module["apply_all"](st, live=False)
 
+    cfg = module["CFG"]
     essential = [
-        home / ".config/hypr/mocha-theme.lua",
-        home / ".config/kitty/mocha-theme.conf",
-        home / ".config/hokum/themes/mocha.kdl",
-        home / ".config/zsh/p10k-mocha.zsh",
+        cfg / "hypr/mocha-theme.lua",
+        cfg / "kitty/mocha-theme.conf",
+        cfg / "hokum/themes/mocha.kdl",
+        cfg / "zsh/p10k-mocha.zsh",
     ]
     missing = [str(p) for p in essential if not p.is_file() or p.stat().st_size == 0]
     if missing:
