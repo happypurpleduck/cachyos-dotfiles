@@ -65,3 +65,7 @@ jobs:
         run: |
           python3 -m py_compile scripts/pull-preflight.py tests/test-pull-preflight.py
           python3 tests/test-pull-preflight.py
+      - name: Repository-wide portability and minimal AUR policy audit
+        run: |
+          python3 -m py_compile tests/test-repository-audit.py
+          python3 tests/test-repository-audit.py
