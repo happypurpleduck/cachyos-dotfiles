@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Parse shell scripts
         run: |
-          bash -n install common/bin/.local/bin/dot scripts/fetch-assets system/setup tests/test-checkout-discovery.sh tests/test-two-host-sync.sh
+          bash -n install common/bin/.local/bin/dot scripts/fetch-assets system/setup tests/test-checkout-discovery.sh tests/test-two-host-sync.sh tests/test-system-preview.sh
       - name: Checkout discovery and host validation
         run: bash tests/test-checkout-discovery.sh
       - name: Two-host Git sync and conflict recovery
@@ -33,3 +33,5 @@ jobs:
         run: |
           python3 -m py_compile scripts/migrate-folded.py tests/test-migrate-folded.py
           python3 tests/test-migrate-folded.py
+      - name: System setup preview and privilege guard
+        run: bash tests/test-system-preview.sh
