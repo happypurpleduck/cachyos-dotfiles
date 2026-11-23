@@ -137,9 +137,31 @@ example `DOT_HOST=laptop dot status`. Keep **one distinct host directory per
 physical machine**; do not select another machine's hardware profile merely
 because its settings look similar. `hosts/_template` is never selectable.
 
+Before first use **on each physical machine**, create a new host profile if
+needed and confirm it explicitly:
+
+```sh
+dot new-host my-new-host       # only if it doesn't exist yet
+DOT_HOST=my-new-host dot confirm-host
+DOT_HOST=my-new-host dot doctor
+DOT_HOST=my-new-host dot install
+```
+
+`dot confirm-host` requires typing the chosen profile name and saves a
+non-Git local marker tied to `/etc/machine-id`. Mutating commands refuse to
+operate on an unconfirmed profile, even if the hostname matches. A renamed
+machine or a cloned system with a new machine-id must be confirmed again.
+This is **not** a hardware probe: inspect display/GPU/audio configuration
+before confirming. The original host's Chrome and Zed MIME defaults now live
+in `hosts/husain-pc/home/.config/mimeapps.list`; the shared defaults make no
+assumption that other hosts have those optional applications. The T3 Code
+launcher uses `t3code-launch` from the user's `~/.local/bin`, which must be
+available in the graphical session `PATH`. The Waypaper seed no longer
+references a different user's wallpaper file.
+
 `install` asks for sudo a few times and:
 
-1. offers to create `hosts/<hostname>/` from `hosts/_template` if this machine is new
+1. requires explicit `dot confirm-host` enrollment (create the host profile first if this machine is new)
 2. asks about optional apps (`packages/optional/`, e.g. qBittorrent) — answers are saved per machine —
    then installs `packages/common.txt`, the host's `packages.txt` and the chosen optional groups
    (AUR lists via paru, kept minimal)
