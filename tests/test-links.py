@@ -224,6 +224,44 @@ with tempfile.TemporaryDirectory() as tmp:
     invoke(home_a, "A", "--backup-conflicts")
     assert not stale.exists()
 
+    # A brand-new CachyOS home may already contain system-provided config.
+    # Preflight summarizes ordinary collisions instead of printing hundreds of
+    # blockers; approved backups remain journaled and exactly recoverable.
+    stock = root / "stock-home"
+    stock.mkdir()
+    (stock / ".config/hypr").mkdir(parents=True)
+    (stock / ".config/hypr/hyprland.lua").write_text("CachyOS hypr config")
+    (stock / ".zshrc").write_text("CachyOS zsh config")
+    preview = invoke(stock, "A", "--install-preflight", ok=False)
+    assert preview.returncode == 3, (preview.stdout, preview.stderr)
+    assert "2 existing home config" in preview.stdout
+    assert (stock / ".zshrc").read_text() == "CachyOS zsh config"
+    assert (stock / ".config/hypr/hyprland.lua").read_text() == "CachyOS hypr config"
+    invoke(stock, "A", "--backup-conflicts", "--dry-run")
+    applied = invoke(stock, "A", "--backup-conflicts")
+    txid = re.search(r"dot rollback (\S+)", applied.stdout).group(1)
+    assert (stock / ".zshrc").is_symlink()
+    assert (stock / ".config/hypr/hyprland.lua").is_symlink()
+    tx = stock / ".local/state/dotfiles-backup/transactions" / txid
+    assert (tx / "saved/.zshrc").read_text() == "CachyOS zsh config"
+    assert (tx / "saved/.config/hypr/hyprland.lua").read_text() == "CachyOS hypr config"
+    invoke(stock, "A", "--rollback", txid)
+    assert (stock / ".zshrc").read_text() == "CachyOS zsh config"
+    assert not (stock / ".zshrc").is_symlink()
+    assert (stock / ".config/hypr/hyprland.lua").read_text() == "CachyOS hypr config"
+    assert not (stock / ".config/hypr/hyprland.lua").is_symlink()
+
+    # Unsafe parent symlinks remain blockers even when file backup is possible.
+    unsafe = root / "stock-with-folded-parent"
+    unsafe.mkdir()
+    (unsafe / ".config").mkdir()
+    (unsafe / ".config/hypr").symlink_to(
+        repo / "common/hypr/.config/hypr", target_is_directory=True
+    )
+    blocked = invoke(unsafe, "A", "--install-preflight", ok=False)
+    assert blocked.returncode == 2
+    assert "unsafe blocker" in blocked.stderr
+
     # Legacy folded Stow directory symlinks are rejected instead of silently
     # unlinking or reshaping an application's source directory.
     folded = root / "folded home"
