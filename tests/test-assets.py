@@ -71,7 +71,9 @@ with tempfile.TemporaryDirectory() as temporary:
     observed = []
     def fake_urlopen(request: Request, *, timeout):
         observed.append((request.full_url, request.get_header("Accept")))
-        return BytesIO(b"x" * 48)
+        response = BytesIO(b"x" * 48)
+        response.headers = {}
+        return response
     try:
         asset.urlopen = fake_urlopen
         assert len(asset.download(asset.NIGHTLIES, 1024, attempts=1)) == 48
