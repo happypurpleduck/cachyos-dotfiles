@@ -100,6 +100,43 @@ with tempfile.TemporaryDirectory() as temporary:
     assert b"old-build" in target.read_bytes()
     asset.download = old_download
 
+    # Failure after the first live promotion must restore the entire MPV group.
+    mpv = home / ".config/mpv"
+    group = {"scripts/uosc/main.lua": b"new main", "scripts/uosc/two.lua": b"new two"}
+    first = mpv / "scripts/uosc/main.lua"
+    second = mpv / "scripts/uosc/two.lua"
+    real_replace = asset.os.replace
+
+    def fail_second(src, dst):
+        if Path(dst) == second:
+            raise OSError("injected second promotion failure")
+        return real_replace(src, dst)
+
+    for existing in (False, True):
+        first.parent.mkdir(parents=True, exist_ok=True)
+        first.unlink(missing_ok=True)
+        second.unlink(missing_ok=True)
+        if existing:
+            first.write_bytes(b"previous main")
+            second.write_bytes(b"previous two")
+        asset.os.replace = fail_second
+        try:
+            try:
+                asset.promote_zip_group(mpv, group)
+                assert False, "partial asset update erroneously succeeded"
+            except OSError:
+                pass
+        finally:
+            asset.os.replace = real_replace
+        assert first.exists() == existing
+        assert second.exists() == existing
+        if existing:
+            assert first.read_bytes() == b"previous main"
+            assert second.read_bytes() == b"previous two"
+    asset.promote_zip_group(mpv, group)
+    assert first.read_bytes() == b"new main"
+    assert second.read_bytes() == b"new two"
+
     cli = subprocess.run(
         [sys.executable, str(script), "--status", "--json"],
         env={**os.environ, "HOME": str(home)},

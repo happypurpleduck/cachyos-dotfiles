@@ -71,6 +71,16 @@ def present_display_manager(root: Path, ctl: str | None) -> list[str]:
     return sorted(found)
 
 
+def is_greetd_enabled(ctl: str) -> bool:
+    return run_systemctl(ctl, "is-enabled", "greetd.service", check=False).returncode == 0
+
+
+def restore_greetd_enabled(ctl: str, previously_enabled: bool) -> None:
+    # Do not start/stop/restart a running login manager. Restore only enablement.
+    if is_greetd_enabled(ctl) != previously_enabled:
+        run_systemctl(ctl, "enable" if previously_enabled else "disable", "greetd.service")
+
+
 def check_prereqs(root: Path, source: Path, user: str) -> None:
     expected = [
         source / "core/Theme.qml",
@@ -187,6 +197,10 @@ def activate(root: Path, source: Path, home: Path, user: str, *,
         )
     if not ctl:
         raise ValueError("systemctl is required for display-manager activation")
+    greetd_was_enabled = is_greetd_enabled(ctl)
+    greetd_was_active = run_systemctl(
+        ctl, "is-active", "greetd.service", check=False
+    ).returncode == 0
     root_backups = root / "var/backups/cachyos-dotfiles/greeter"
     root_backups.mkdir(parents=True, exist_ok=True)
     txid = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid4().hex[:12]
@@ -202,7 +216,10 @@ def activate(root: Path, source: Path, home: Path, user: str, *,
     journal = {"version": 1, "kind": "greeter", "id": txid,
                "user": user, "previous_dm": others[0] if others else None,
                "previous_config": previous_cfg is not None,
-               "previous_live": live.exists(), "status": "started"}
+               "previous_live": live.exists(),
+               "previous_greetd_enabled": greetd_was_enabled,
+               "previous_greetd_active": greetd_was_active,
+               "status": "started"}
     write_json(backup / "journal.json", journal)
     disabled = False
     prepared = parent / f".mocha-live-next-{uuid4().hex[:12]}"
@@ -248,7 +265,10 @@ def activate(root: Path, source: Path, home: Path, user: str, *,
             shutil.copytree(backup / "mocha-greeter.original", live)
         if disabled:
             run_systemctl(ctl, "enable", others[0], check=False)
-        run_systemctl(ctl, "disable", "greetd.service", check=False)
+        try:
+            restore_greetd_enabled(ctl, greetd_was_enabled)
+        except subprocess.SubprocessError as exc:
+            print(f"CRITICAL: restore greetd enablement from TTY: {exc}", file=sys.stderr)
         raise
     print(f"greeter enabled for next boot; current session unchanged; rollback: dot greeter --rollback {txid}")
     return txid
@@ -270,7 +290,11 @@ def rollback(root: Path, txid: str, ctl: str) -> None:
             hashlib.sha256(cfg.read_bytes()).hexdigest() != journal["active_config_sha256"]
             or hash_tree(live) != journal["active_tree_sha256"]):
         raise ValueError("greeter config/assets changed since activation; refusing to delete edits")
-    run_systemctl(ctl, "disable", "greetd.service")
+    if "previous_greetd_enabled" not in journal:
+        raise ValueError("legacy greeter journal has no safe greetd state; recover manually from TTY")
+    # Restore the exact pre-activation enablement, including existing greetd.
+    # We do not change active runtime state or restart a running login manager.
+    restore_greetd_enabled(ctl, journal["previous_greetd_enabled"])
     if live.exists():
         shutil.rmtree(live)
     if journal["previous_live"]:
