@@ -81,6 +81,9 @@ zsh-theme-powerlevel10k
 fzf
 zoxide
 ripgrep
+eza
+bat
+fd
 lazygit
 neovim
 micro
