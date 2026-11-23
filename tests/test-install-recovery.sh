@@ -14,6 +14,9 @@ cp "$source_repo/install" "$checkout/install"
 chmod +x "$checkout/common/bin/.local/bin/dot"
 cat > "$checkout/scripts/package-audit.py" <<'PY'
 import sys
+from pathlib import Path
+if "--install" in sys.argv:
+    (Path.home() / "package-install-invoked").write_text("yes")
 if "--json" in sys.argv:
     print('{"missing_aur":[]}')
 else:
@@ -25,7 +28,15 @@ import os
 import sys
 home = Path.home()
 file = home / ".config/test-linked"
-if "--dry-run" in sys.argv:
+if "--install-preflight" in sys.argv:
+    if os.environ.get("SIMULATE_UNSAFE_TARGET") == "1":
+        print("BLOCKED: unsafe parent", file=sys.stderr)
+        raise SystemExit(2)
+    if os.environ.get("SIMULATE_EXISTING_CONFIG") == "1":
+        print("Link preflight: 2 existing home config files conflict")
+        raise SystemExit(3)
+    print("Link preflight: no collisions")
+elif "--dry-run" in sys.argv:
     print("Dry run: no files changed")
 elif os.environ.get("SIMULATE_LINK_FAIL") == "1":
     print("injected linker failure", file=sys.stderr)
@@ -37,6 +48,8 @@ elif "--rollback" in sys.argv:
 else:
     file.parent.mkdir(parents=True, exist_ok=True)
     file.write_text("new link for this test")
+    if "--backup-conflicts" in sys.argv:
+        (home / "backup-consent-passed").write_text("yes")
     print("applied; rollback with: dot rollback 20261123T000000Z-deadbeefcafe")
 PY
 cat > "$checkout/scripts/first-login.py" <<'PY'
@@ -80,6 +93,22 @@ export UNIT_STATE="$tmp/enabled-units"
 : > "$UNIT_STATE"
 unset DOTFILES
 printf 'A\n' | "$dot" confirm-host >/dev/null 2>&1
+
+# Unsafe targets and missing backup approval must fail BEFORE package install.
+if SIMULATE_UNSAFE_TARGET=1 "$dot" install >"$tmp/output" 2>"$tmp/error"; then
+  echo "unsafe target accepted" >&2; exit 1
+fi
+grep -q 'unsafe home configuration targets' "$tmp/error"
+[ ! -e "$home/package-install-invoked" ]
+if SIMULATE_EXISTING_CONFIG=1 "$dot" install </dev/null >"$tmp/output" 2>"$tmp/error"; then
+  echo "missing backup consent accepted" >&2; exit 1
+fi
+grep -q 'configuration backup not approved' "$tmp/error"
+if printf 'NO\n' | SIMULATE_EXISTING_CONFIG=1 "$dot" install >"$tmp/output" 2>"$tmp/error"; then
+  echo "declined backup consent accepted" >&2; exit 1
+fi
+[ ! -e "$home/package-install-invoked" ]
+[ ! -e "$home/.config/test-linked" ]
 
 # A linker failure must remain fatal despite Bash conditional errexit rules.
 if SIMULATE_LINK_FAIL=1 "$dot" install >"$tmp/output" 2>"$tmp/error"; then
@@ -128,4 +157,10 @@ fi
 grep -qx 'hokum.service' "$UNIT_STATE"
 ! grep -qx 'gnome-keyring-daemon.socket' "$UNIT_STATE"
 
-echo 'installer checkpoint rollback, prior unit state, and explicit host setup: OK'
+# Explicit typed approval must carry the backup flag into the link transaction.
+printf 'BACKUP CONFLICTS\n' | SIMULATE_EXISTING_CONFIG=1 "$dot" install >"$tmp/output" 2>"$tmp/error"
+[ "$(cat "$home/backup-consent-passed")" = yes ]
+grep -q '2 existing home config' "$tmp/output"
+[ -e "$home/package-install-invoked" ]
+
+echo 'installer checkpoint rollback, consented existing-file backups and host setup: OK'
