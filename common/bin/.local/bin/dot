@@ -43,6 +43,33 @@ if [ "$HOST" != "$SYSTEM_HOST" ]; then
   warn "DOT_HOST selects $HOST (system hostname: $SYSTEM_HOST); using that profile intentionally"
 fi
 
+# Explicit one-time machine/profile enrollment, stored locally (not in Git).
+HOST_ID_FILE="$HOME/.local/state/cachyos-dotfiles/confirmed-host"
+host_identity() {
+  [ -s /etc/machine-id ] || die "missing /etc/machine-id: cannot confirm host identity"
+  printf '%s:%s\n' "$HOST" "$(sha256sum /etc/machine-id | awk '{print $1}')"
+}
+check_host_identity() {
+  [ -f "$HOST_ID_FILE" ] && [ ! -L "$HOST_ID_FILE" ] &&
+    [ "$(cat "$HOST_ID_FILE")" = "$(host_identity)" ] && return 0
+  die "host profile $HOST is not confirmed for this machine; run dot confirm-host"
+}
+cmd_confirm_host() {
+  local answer temp
+  [ -d "$HOSTDIR/home" ] || die "create hosts/$HOST first with dot new-host"
+  say "selected profile: hosts/$HOST (system hostname: $SYSTEM_HOST)"
+  say "confirm only after checking this machine's monitors, GPU, audio and packages"
+  read -r -p "Type $HOST to authorize this physical machine: " answer
+  [ "$answer" = "$HOST" ] || die "host confirmation cancelled"
+  [ ! -L "$HOST_ID_FILE" ] || die "refusing symlinked host-selection state"
+  umask 077
+  mkdir -p -- "$(dirname "$HOST_ID_FILE")"
+  temp=$(mktemp "$(dirname "$HOST_ID_FILE")/.host-XXXXXXXX")
+  host_identity > "$temp"
+  mv -f -- "$temp" "$HOST_ID_FILE"
+  say "confirmed hosts/$HOST on this machine (local state only)"
+}
+
 common_pkgs() { (cd "$DOT/common" && for d in */; do echo "${d%/}"; done); }
 has_host() { [ -d "$HOSTDIR/home" ]; }
 
@@ -76,6 +103,7 @@ cmd_link() {
     cmd_doctor
     return
   fi
+  check_host_identity
   python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" \
     --home "$HOME" "$@"
 }
@@ -92,18 +120,21 @@ seed() {
 }
 
 cmd_unlink() {
+  check_host_identity
   need python3 python
   python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" \
     --home "$HOME" --unlink "$@"
 }
 
 cmd_migrate_folded() {
+  check_host_identity
   need python3 python
   python3 "$DOT/scripts/migrate-folded.py" --repo "$DOT" --host "$HOST" \
     --home "$HOME" "$@"
 }
 
 cmd_rollback() {
+  check_host_identity
   [ "$#" -eq 1 ] || die "usage: dot rollback <transaction-id>"
   need python3 python
   python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" \
@@ -209,6 +240,7 @@ cmd_diff() {
 }
 
 cmd_save() {
+  check_host_identity
   local allow_staged=0
   if [ "${1:-}" = "--allow-staged" ]; then
     allow_staged=1
@@ -241,6 +273,7 @@ cmd_save() {
 }
 
 cmd_pull() {
+  check_host_identity
   if ! git -C "$DOT" diff --quiet || ! git -C "$DOT" diff --cached --quiet; then
     die "working tree contains tracked edits; review or save them before dot pull (no automatic stash)"
   fi
@@ -289,6 +322,7 @@ opt_pkgs() {
 # dot optional <group>…   install these groups
 # dot optional --list     show groups and this machine's answers
 cmd_optional() {
+  check_host_identity
   [ -d "$HOSTDIR" ] || die "no hosts/$HOST (dot new-host)"
   local g a st ask_all=0 picked=()
   case ${1:-} in
@@ -315,6 +349,7 @@ cmd_optional() {
 }
 
 cmd_packages() {
+  check_host_identity
   [ -d "$HOSTDIR" ] || die "no hosts/$HOST (dot new-host)"
   local common aur
   common=$( (pkglist "$DOT/packages/common.txt"; opt_pkgs) | sort -u)
@@ -333,6 +368,7 @@ cmd_packages() {
 }
 
 cmd_install_packages() {
+  check_host_identity
   need python3 python
   # Run all repo/AUR dependency checks BEFORE invoking a package manager.
   python3 "$DOT/scripts/package-audit.py" --repo "$DOT" --host "$HOST" --install
@@ -347,6 +383,7 @@ cmd_system_setup() {
 }
 cmd_install() {
   if [ "${1:-}" = "--dry-run" ]; then cmd_doctor; return; fi
+  check_host_identity
   local apply_system=0 a
   if [ "${1:-}" = "--apply-system" ]; then
     apply_system=1
@@ -438,6 +475,7 @@ cmd_new_host() {
 # dot add [--host] <path>… — move files into the repo and link them back.
 #   common package = first directory under ~/.config (or the file name for dotfiles in ~)
 cmd_add() {
+  check_host_identity
   local to_host=0 f rel pkg dest
   [ "${1:-}" = "--host" ] && { to_host=1; shift; }
   [ $# -gt 0 ] || die "usage: dot add [--host] <path>…"
@@ -489,6 +527,7 @@ dot — $DOT on $HOST
   dot optional [grp…]  optional apps: ask about new groups, or install the named ones
                        (--list shows them, --ask asks about all of them again)
   dot new-host [name]  start hosts/<name> from hosts/_template
+  dot confirm-host      bind this machine to the selected profile (before mutations)
   dot cd               print the repo path (cd "\$(dot cd)")
 EOF
 }
@@ -511,6 +550,7 @@ case ${1:-help} in
   install-packages) cmd_install_packages ;;
   optional | opt) shift; cmd_optional "$@" ;;
   new-host) shift; cmd_new_host "${1:-}" ;;
+  confirm-host) cmd_confirm_host ;;
   cd | path) echo "$DOT" ;;
   help | -h | --help) cmd_help ;;
   *) cmd_help; exit 1 ;;
