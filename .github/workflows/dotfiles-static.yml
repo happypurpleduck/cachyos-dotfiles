@@ -1,0 +1,17 @@
+name: Dotfiles static checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse shell scripts
+        run: |
+          bash -n install common/bin/.local/bin/dot scripts/fetch-assets system/setup tests/test-checkout-discovery.sh
+      - name: Checkout discovery and host validation
+        run: bash tests/test-checkout-discovery.sh
