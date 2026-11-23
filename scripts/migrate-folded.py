@@ -136,6 +136,8 @@ def verify_root(home: Path, item: dict) -> bool:
     root = home / item["path"]
     if root.is_symlink() and os.readlink(root) == item["raw_link"]:
         return False  # not migrated yet
+    if not os.path.lexists(root):
+        return True  # interrupted between unlinking old link and mkdir
     if not root.is_dir() or root.is_symlink():
         raise ValueError(f"modified migrated directory: {root}")
     expected = {x["path"]: Path(x["source"]) for x in item["files"]}
@@ -180,6 +182,9 @@ def rollback_migration(repo: Path, home: Path, host: str, txid: str) -> None:
         if not applied:
             continue
         root = home / item["path"]
+        if not os.path.lexists(root):
+            os.symlink(item["raw_link"], root)
+            continue
         for entry in reversed(item["files"]):
             file = home / entry["path"]
             if file.is_symlink():
