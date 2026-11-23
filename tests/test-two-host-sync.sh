@@ -37,7 +37,10 @@ dot_for() {
   local host=$1
   shift
   env -u DOTFILES HOME="$tmp/home-$host" DOT_HOST="$host" \
-    "$tmp/$host/common/bin/.local/bin/dot" "$@" 2>"$tmp/log-$host"
+    "$tmp/$host/common/bin/.local/bin/dot" "$@" 2>"$tmp/log-$host" || {
+      cat "$tmp/log-$host" >&2
+      return 1
+    }
 }
 settings='common/demo/.config/demo/settings.conf'
 
