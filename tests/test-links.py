@@ -24,6 +24,8 @@ with tempfile.TemporaryDirectory() as tmp:
             dest.write_bytes((real / path).read_bytes())
         else:
             dest.write_text(value)
+        if path == "common/bin/.local/bin/dot":
+            dest.chmod(0o755)
         return dest
 
     for path in (
@@ -84,6 +86,26 @@ with tempfile.TemporaryDirectory() as tmp:
             assert (home / suffix).read_text() == f"{host} {app}"
             assert (home / f".config/{app}/{host}-only").is_symlink()
         assert (home / path).read_text() == "shared editor"
+    # Exercise the public CLI in addition to the Python transaction engine.
+    dot = repo / "common/bin/.local/bin/dot"
+    cli_env = {**os.environ, "HOME": str(home_a), "DOT_HOST": "A"}
+    cli_env.pop("DOTFILES", None)
+    def call_dot(*args: str):
+        response = subprocess.run([str(dot), *args], env=cli_env,
+                                  capture_output=True, text=True)
+        assert response.returncode == 0, (args, response.stdout, response.stderr)
+        assert "command not found" not in response.stderr
+        return response
+
+    assert "all links ok" in call_dot("status").stdout
+    add("seed/.config/waypaper/config.ini", "seed content")
+    call_dot("link")
+    seeded = home_a / ".config/waypaper/config.ini"
+    assert seeded.read_text() == "seed content"
+    seeded.write_text("app changed")
+    call_dot("link")
+    assert seeded.read_text() == "app changed"
+
     extra = home_a / ".config/editor/unrelated-user-data"
     extra.write_text("must survive")
 
@@ -110,6 +132,7 @@ with tempfile.TemporaryDirectory() as tmp:
     target = home_a / path
     target.unlink()
     target.write_text("new app-authored content")
+    assert "replaced by an app" in call_dot("status").stdout
     invoke(home_a, "A", ok=False)
     result = invoke(home_a, "A", "--backup-conflicts")
     txid = re.search(r"dot rollback (\S+)", result.stdout).group(1)
