@@ -447,7 +447,8 @@ dot — $DOT on $HOST
   dot unlink           remove the links (repo files stay)
   dot status           git status + links that are missing or were replaced by an app
   dot diff [--stat] [path…]  tracked shared/host changes; ignores untracked files
-  dot save [message]   commit tracked shared/host edits, rebase and push\n  dot save --allow-staged MSG  also publish explicitly staged other-host/maintenance files
+  dot save [message]   commit tracked shared/host edits, rebase and push
+  dot save --allow-staged MSG  also publish explicitly staged other-host/maintenance files
   dot pull             pull without autostash; new links require explicit dot link
   dot add [--host] F…  move file(s) into the repo (common, or this host with --host) and link
   dot packages         snapshot this machine's extra packages into hosts/$HOST
@@ -464,7 +465,7 @@ case ${1:-help} in
   unlink) cmd_unlink ;;
   status | st) cmd_status ;;
   diff | d) shift; cmd_diff "$@" ;;
-  save) shift; cmd_save "$*" ;;
+  save) shift; cmd_save "$@" ;;
   pull | sync) cmd_pull ;;
   add) shift; cmd_add "$@" ;;
   packages | pkgs) cmd_packages ;;
