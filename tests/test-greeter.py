@@ -141,6 +141,7 @@ with tempfile.TemporaryDirectory() as tmp:
     # Default full-desktop reconciliation switches SDDM at next boot while
     # preserving its state for rollback, and is repeatable without toggling DMs.
     service_state.write_text("sddm.service\n")
+    dm.unlink(missing_ok=True)
     dm.symlink_to("../sddm.service")
     cfg.write_text("stock greeter config\n")
     env["MOCK_FAIL_GREETD"] = "1"
