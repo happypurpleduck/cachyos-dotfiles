@@ -17,3 +17,7 @@ jobs:
         run: bash tests/test-checkout-discovery.sh
       - name: Two-host Git sync and conflict recovery
         run: bash tests/test-two-host-sync.sh
+      - name: Compile and test effective-target planner
+        run: |
+          python3 -m py_compile scripts/effective-targets.py tests/test-effective-targets.py
+          python3 tests/test-effective-targets.py
