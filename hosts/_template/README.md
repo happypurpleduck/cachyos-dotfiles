@@ -38,3 +38,7 @@ secret tokens, local keyrings, runtime histories, device identifiers or
 application-generated caches.
 
 Full multi-host test and recovery instructions: docs/verification.md.
+
+System services are separate from user services: edit this host's services.txt
+to select supported optional Bluetooth service, run dot services to inspect
+readiness, and only then explicitly authorize dot services --apply.
