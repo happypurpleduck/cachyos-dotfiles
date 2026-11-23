@@ -57,6 +57,11 @@ check_host_identity() {
 cmd_confirm_host() {
   local answer temp
   [ -d "$HOSTDIR/home" ] || die "create hosts/$HOST first with dot new-host"
+  if [ -f "$HOST_ID_FILE" ] && [ ! -L "$HOST_ID_FILE" ] &&
+     [ "$(cat "$HOST_ID_FILE")" = "$(host_identity)" ]; then
+    say "host profile $HOST is already confirmed on this machine"
+    return 0
+  fi
   say "selected profile: hosts/$HOST (system hostname: $SYSTEM_HOST)"
   say "confirm only after checking this machine's monitors, GPU, audio and packages"
   read -r -p "Type $HOST to authorize this physical machine: " answer
@@ -631,10 +636,10 @@ cmd_new_host() {
   [[ "$name" =~ ^[[:alnum:]][[:alnum:]_.-]*$ ]] ||
     die "invalid hostname: $name"
   case "$name" in .|..|_template) die "cannot create reserved host: $name" ;; esac
-  [ -e "$DOT/hosts/$name" ] && die "hosts/$name already exists"
+  { [ -e "$DOT/hosts/$name" ] || [ -L "$DOT/hosts/$name" ]; } && die "hosts/$name already exists"
   cp -r "$DOT/hosts/_template" "$DOT/hosts/$name"
   sed -i "s/HOSTNAME/$name/g" "$DOT/hosts/$name/README.md" "$DOT/hosts/$name/home/.config/hypr/host.lua"
-  say "created hosts/$name — edit its host.lua (monitors: hyprctl monitors) and host.json, then: dot link"
+  say "created hosts/$name — review its host.lua and host.json, then run ./install to confirm and activate"
 }
 
 # dot add [--host] <path>… — preview and copy files; never move HOME files.
