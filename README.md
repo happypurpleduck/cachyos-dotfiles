@@ -78,6 +78,34 @@ transaction only covers managed links. Successful link application does not
 automatically reload Hyprland or restart Quickshell.
 
 
+### Optional assets, retries and failure recovery
+
+Asset downloads are independent of linking. Core first-login config works
+even when an upstream release, wallpaper or cursor download fails.
+
+```sh
+dot assets --status                        # offline inventory
+dot assets --status --json                 # machine-readable report
+dot assets --asset cursors                  # retry one missing asset
+dot assets --asset t3code --force          # explicitly update one AppImage
+dot assets --asset wallpapers --force      # refresh the wallpaper collection
+```
+
+`scripts/fetch-assets` uses the same asset manager: download to temporary
+storage, validate ZIP members and expected content, then promote complete
+assets. Existing AppImages survive failed downloads. Directory replacements
+retain their previous version beside the new one as a `.previous-...` backup.
+The T3 Code nightly resolver refuses missing/invalid GitHub release metadata
+and only installs a plausible ELF AppImage. Anime4K is pinned to v4.0.1;
+other downloads deliberately track the upstream latest URLs, and the resolved
+T3 release/tag is stored under `~/.local/opt/t3code/.version.json`.
+
+Zed and mise do **not** run remote `curl | sh` installers anymore.
+Install them via `dot optional zed` and `dot optional mise` (official
+repository packages). If they are absent, startup and shell initialization
+continue without them; mise tool installation is optional. `dot doctor`
+lists all remaining optional asset gaps.
+
 ### Initial theme and session readiness
 
 `dot install` now runs `scripts/first-login.py` immediately after linking
@@ -187,7 +215,7 @@ references a different user's wallpaper file.
 2. asks about optional apps (`packages/optional/`, e.g. qBittorrent) — answers are saved per machine —
    then installs `packages/common.txt`, the host's `packages.txt` and the chosen optional groups
    (AUR lists via paru, kept minimal)
-3. downloads assets: wallpapers, cursors, mpv scripts/shaders, T3 Code, Zed, mise tools
+3. attempts optional assets: wallpapers, cursors, mpv scripts/shaders and T3 Code (failures are reported but do not block linking; Zed/mise are package-managed)
 4. links the effective per-host files transactionally (blocking existing collisions unless explicitly approved)
 5. **skips system-level changes by default**; pass `--apply-system` to opt into limited PAM/DDC setup
 6. configures user services and runs the host's `setup` if it has one

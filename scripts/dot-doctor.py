@@ -117,7 +117,10 @@ def report(repo: Path, home: Path, host: str) -> dict:
             "plan": "not performed; system/setup and greeter need independent approval",
             "greeter_activation": "never included in doctor or link dry-run",
         },
-        "assets": "not checked yet; tracked in issue #8",
+        "assets": (
+            __import__("runpy").run_path(str(repo / "scripts/asset-manager.py"))["status"](home)
+            if (repo / "scripts/asset-manager.py").is_file() else {}
+        ),
     }
 
 
@@ -152,6 +155,9 @@ def main() -> int:
         print(f"  packages: {pkgs['status']}, missing: {len(pkgs['missing'])}")
         if pkgs["missing"]:
             print("    missing: " + ", ".join(pkgs["missing"]))
+        missing_assets = [name for name, asset in data["assets"].items()
+                          if not asset["installed"]]
+        print("  optional assets missing: " + (", ".join(missing_assets) or "none"))
         print("  system: existing display manager "
               f"{data['system_changes']['display_manager']} (unchanged)")
         print("  dry run only: no links, packages, services, backups, or /etc modifications")

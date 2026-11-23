@@ -385,6 +385,11 @@ cmd_install_packages() {
   python3 "$DOT/scripts/package-audit.py" --repo "$DOT" --host "$HOST" --install
 }
 
+cmd_assets() {
+  need python3 python
+  python3 "$DOT/scripts/asset-manager.py" --home "$HOME" "$@"
+}
+
 cmd_system_setup() {
   case "${1:-}" in
     "" | --dry-run)
@@ -537,6 +542,8 @@ dot — $DOT on $HOST
   dot install          packages, assets, links, user services (no system changes)
   dot install --apply-system  explicitly include limited PAM/DDC system setup
   dot system-setup [--apply]  preview or apply limited PAM/DDC setup
+  dot assets --status          inspect optional downloads without network
+  dot assets --asset t3code    fetch one optional asset (use --force to refresh)
   dot link             safely link this host's effective per-file configuration
   dot link --backup-conflicts  back up colliding home files before linking
   dot unlink           unlink managed files without deleting app data
@@ -564,6 +571,7 @@ EOF
 case ${1:-help} in
   install) shift; cmd_install "$@" ;;
   system-setup) shift; cmd_system_setup "$@" ;;
+  assets) shift; cmd_assets "$@" ;;
   link) shift; cmd_link "$@" ;;
   unlink) shift; cmd_unlink "$@" ;;
   rollback) shift; cmd_rollback "$@" ;;

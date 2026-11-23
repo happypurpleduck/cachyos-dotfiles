@@ -79,4 +79,8 @@ alias lg='lazygit'
 alias update='sudo pacman -Syu && paru -Sua'   # repos, then AUR packages
 
 # ── mise (runtimes and global tools such as claude) ─────────────────
-eval "$(~/.local/bin/mise activate zsh)"
+if [[ -x "$HOME/.local/bin/mise" ]]; then
+  eval "$("$HOME/.local/bin/mise" activate zsh)"
+elif (( $+commands[mise] )); then
+  eval "$(mise activate zsh)"
+fi
