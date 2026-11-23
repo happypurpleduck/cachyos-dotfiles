@@ -29,3 +29,7 @@ jobs:
         run: |
           python3 -m py_compile scripts/dot-links.py tests/test-links.py
           python3 tests/test-links.py
+      - name: Legacy Stow folded-directory migration and rollback
+        run: |
+          python3 -m py_compile scripts/migrate-folded.py tests/test-migrate-folded.py
+          python3 tests/test-migrate-folded.py
