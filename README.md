@@ -49,11 +49,28 @@ common source; changes in other hosts are never applied. Rollback refuses to
 overwrite files replaced by an app since the transaction, or to rewind past
 newer transactions.
 
-**Migration caution:** legacy Stow *directory* symlinks are intentionally
-blocked. These may contain generated files or application data. A separate
-audited migration is needed before `dot link` can run on those installations;
-do not delete or flatten these links by hand. `dot unlink` without a new
-link-state manifest likewise refuses to guess ownership.
+**Migrating an existing Stow installation:** `dot link` deliberately
+blocks legacy folded *directory* symlinks. Use an explicit, separate migration
+for those directories:
+
+```sh
+dot migrate-folded             # preview exactly which directories and files
+dot migrate-folded --apply     # explicitly convert legacy directory symlinks
+dot doctor                     # verify each new per-file link
+dot link                       # adopt the effective common/host links
+```
+
+The migration turns each selected directory link into a real directory and
+individual links to source files, including **ignored/generated files and
+originally empty directories**. It applies host overrides at the file level,
+without writing to the source repository or overwriting unrelated app state.
+Each migration has its own journal; to roll it back, first roll back any
+subsequent `dot link` transaction(s), then run `dot rollback <migration-id>`.
+Rollback refuses to delete files or directories created by an application
+after migration. Never manually remove folded directory symlinks.
+
+`dot unlink` without a new link-state manifest still refuses to guess
+ownership; it does not automatically reverse a legacy Stow installation.
 
 System-level changes, startup/service activation, greeter migration and a
 full interrupted-install recovery path remain work in #6; the per-file
