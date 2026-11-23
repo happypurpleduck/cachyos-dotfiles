@@ -121,6 +121,7 @@ def stage(root: Path, source: Path, home: Path, user: str) -> Path:
         else:
             wallpaper = ""
         theme = {"accent": settings.get("accent", "mauve"),
+                 "accentHex": settings.get("accentHex", "#cba6f7"),
                  "mode": settings.get("mode", "auto"),
                  "wallpaper": wallpaper}
         (temp / "theme.json").write_text(json.dumps(theme, indent=2))
