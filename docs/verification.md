@@ -82,15 +82,19 @@ To replace an existing display manager, --replace-display-manager must also be s
 ## Failure injection (on disposable VM snapshots only)
 
 - Missing required package: the audit blocks; no silently skipped AUR packages.
+- On a customized desktop with unrelated AUR/local packages and pacman-managed mise/Zed, `dot packages` reports inventory but must not change `hosts/<host>/aur.txt` or `packages.txt`; managed requirements and first-party self-updates remain deliberate.
 - Missing Hokum unit, missing optional mise/Zed, failed wallpaper/cursor download: setup reports accurate status, first-login shell remains usable.
+- Partially delete a previously complete uosc/Anime4K group: the checksum manifest must detect missing members and allow targeted repair without discarding working unrelated assets.
 - App-replaced home symlink: plain dot link blocks; approved --backup-conflicts retains exact bytes; dot rollback TXID restores them.
 - Legacy Stow directory symlink: dot migrate-folded previews, --apply converts to per-file managed links without deleting generated state, rollback restores the original link.
 - Conflicting display manager: activation blocks without explicit consent; from a TTY restore the previous known-good login manager and config.
 - Interrupted sync/failed shared rebase: no forced push, no lost local commits or silent active-config changes.
 - Repeated link/setup: verify idempotence and truthful no-op vs changed summary.
+- Make a managed linker operation fail: the installer must fail closed without claiming success or attempting later seed initialization.
+- Make a seed copy fail after successful link creation: the same transaction must restore newly created links and seed files, refuse symlinked parent paths, and never overwrite pre-existing app data.
 - Make offline theme generation fail **after a successful link transaction**:
   the installer must report a failed phase and automatically restore the
-  modified managed-home links; package installations remain as-is and must
+  modified managed-home links and unedited newly created seeds; package installations remain as-is and must
   not be misrepresented as automatically rolled back.
 - Confirm arbitrary hosts/<host>/setup executable scripts are NOT automatically
   run by dot install. Use dot host-setup to inspect and explicitly authorize.
