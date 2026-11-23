@@ -73,6 +73,12 @@ with tempfile.TemporaryDirectory() as tmp:
     assert "Dry run" in preview.stdout
     invoke(home_a, "A")
     invoke(home_b, "B")
+    txroot = home_a / ".local/state/dotfiles-backup/transactions"
+    before_count = len(list(txroot.glob("*/journal.json")))
+    assert "no-op" in invoke(home_a, "A").stdout
+    assert len(list(txroot.glob("*/journal.json"))) == before_count, (
+        "repeated link unexpectedly created another transaction"
+    )
 
     for home, host in ((home_a, "A"), (home_b, "B")):
         for app, suffix in (
