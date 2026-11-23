@@ -46,6 +46,13 @@ fi
 common_pkgs() { (cd "$DOT/common" && for d in */; do echo "${d%/}"; done); }
 has_host() { [ -d "$HOSTDIR/home" ]; }
 
+# Read-only precedence preview. Does not stow, link, back up or activate files.
+# The linker will consume the same ownership semantics in a follow-up PR.
+cmd_plan() {
+  need python3 python
+  python3 "$DOT/scripts/effective-targets.py" --repo "$DOT" --host "$HOST" --home "$HOME" "$@"
+}
+
 # every repo file with its target: "<source>\t<target>"
 each_file() {
   local pkg
@@ -446,6 +453,7 @@ dot — $DOT on $HOST
   dot link             (re)link everything for this machine (common/* + hosts/$HOST)
   dot unlink           remove the links (repo files stay)
   dot status           git status + links that are missing or were replaced by an app
+  dot plan [--json]    read-only effective common/host target precedence
   dot diff [--stat] [path…]  tracked shared/host changes; ignores untracked files
   dot save [message]   commit tracked shared/host edits, rebase and push
   dot save --allow-staged MSG  also publish explicitly staged other-host/maintenance files
@@ -464,6 +472,7 @@ case ${1:-help} in
   link) cmd_link ;;
   unlink) cmd_unlink ;;
   status | st) cmd_status ;;
+  plan) shift; cmd_plan "$@" ;;
   diff | d) shift; cmd_diff "$@" ;;
   save) shift; cmd_save "$@" ;;
   pull | sync) cmd_pull ;;
