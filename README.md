@@ -282,15 +282,19 @@ AUR usage is restricted to explicitly documented exceptions in
 `packages/aur-exceptions.json`: `hokum-bin` as the core notification
 service, and shared `google-chrome` for Chrome on every desktop. No other AUR
 package may be introduced without a separate review and policy update.
-An AUR installer is never invoked unattended; the installer displays
-the pending exceptions and requires typing `APPROVE AUR` before proceeding.
-**Shelly is the only supported AUR manager.** The installer uses
-`shelly install aur <package>` for allowlisted exceptions and does not
-attempt another AUR backend. A missing Shelly CLI blocks installation
+**A full `./install` does not ask for repeated AUR approvals.** The
+repo's allowlisted packages are the owner's declared choices: normal install
+uses Shelly with `--needed --no-confirm`, and official repository installs use
+pacman `--noconfirm --needed`. **Shelly is the only AUR manager supported.**
+The AUR package names are still checked against `packages/aur-exceptions.json`,
+so simply adding an unreviewed package cannot bypass the policy. A missing Shelly CLI blocks installation
 before any package changes, with guidance to install `shelly` from the
-official CachyOS repository. AUR installations still require explicit
-`APPROVE AUR` confirmation and Shelly's own PKGBUILD review. Unavailable
-repository packages also block rather than being silently skipped. Selected
+official CachyOS repository. **Noninteractive AUR installation has a real
+supply-chain tradeoff:** allowed packages may receive changed upstream
+PKGBUILDs without an extra review prompt. Review changes to those declared
+exceptions before using this mode, or remove the AUR package from the manifest.
+A direct `scripts/package-audit.py --install` call still requires
+`--approve-aur` for AUR work. Unavailable packages remain hard blockers. Selected
 optional groups and host packages remain isolated to their host. `dot doctor`
 uses the same audit.
 
@@ -387,12 +391,17 @@ launcher uses `t3code-launch` from the user's `~/.local/bin`, which must be
 available in the graphical session `PATH`. The Waypaper seed no longer
 references a different user's wallpaper file.
 
-`install` asks for sudo a few times and:
+`install` follows the repo manifests with no repeated application approvals.
+It can still ask for the normal sudo password, and first-time host enrollment
+still asks you to confirm the selected physical machine. Installation does not
+ask about optional package groups: use `dot optional --list` and
+`dot optional <group>` to choose them explicitly.
+
+Full installation:
 
 1. requires explicit `dot confirm-host` enrollment (create the host profile first if this machine is new)
-2. asks about optional apps (`packages/optional/`, e.g. qBittorrent) — answers are saved per machine —
-   then installs `packages/common.txt`, the host's `packages.txt` and the chosen optional groups
-   (reviewed AUR exceptions via Shelly only)
+2. installs `packages/common.txt`, the host's `packages.txt` and already-selected optional groups
+   (approved shared/host AUR exceptions via Shelly only; no repeated typed approval)
 3. attempts optional assets: wallpapers, cursors, mpv scripts/shaders and T3 Code (failures do not block linking)
 4. links the effective per-host files transactionally, automatically backing up replaced stock config files
 5. installs missing mise and Zed via their official user-local installers, with no pacman/AUR management
