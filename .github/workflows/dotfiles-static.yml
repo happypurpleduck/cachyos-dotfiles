@@ -73,3 +73,7 @@ jobs:
         run: |
           python3 -m py_compile scripts/host-services.py tests/test-host-services.py
           python3 tests/test-host-services.py
+      - name: Safe app-authored config import
+        run: |
+          python3 -m py_compile scripts/import-config.py tests/test-config-import.py
+          python3 tests/test-config-import.py
