@@ -6,5 +6,9 @@
 set -euo pipefail
 cd "$(dirname "$(realpath "$0")")"
 [ "$(realpath .)" = "$(realpath ~/cachyos-dotfiles)" ] || export DOTFILES=$PWD
+# A preview must never invoke sudo, pacman, stow, or setup.
+if [ "${1:-}" = "--dry-run" ]; then
+  exec ./common/bin/.local/bin/dot install --dry-run
+fi
 command -v stow >/dev/null || sudo pacman -S --needed stow
-exec ./common/bin/.local/bin/dot install
+exec ./common/bin/.local/bin/dot install "$@"
