@@ -533,6 +533,7 @@ cmd_install() {
     cmd_optional_ask_only
   fi
   python3 "$DOT/scripts/package-audit.py" --repo "$DOT" --host "$HOST" ||
+    die "package prerequisites unavailable"
   # Existing CachyOS configs are common on first boot; no silent overwrites.
   # Unsafe parent/foreign-host links remain blocked even after consent.
   if python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" --home "$HOME" --install-preflight; then
