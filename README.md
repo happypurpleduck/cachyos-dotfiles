@@ -193,6 +193,24 @@ working greeter assets before validation. A fake-root automated test verifies
 these steps; the real login path still requires a separate CachyOS VM test
 before considering installation readiness accepted.
 
+### Optional system services belong to the host
+
+`hosts/<host>/services.txt` is an allowlisted manifest for optional system
+services; currently only `bluetooth` is supported. By default it is empty.
+No other host's preferences are copied or activated.
+
+```sh
+dot services                                   # read-only selected-host service status
+dot doctor --strict                             # includes missing chosen Bluetooth prerequisites
+dot services --apply --confirm 'ENABLE HOST SERVICES'
+```
+
+The last command is explicit opt-in and may run sudo to enable/start
+`bluetooth.service` after checking `bluez` and the unit exist. It is
+idempotent and never disables other services. Generic `dot install` reports
+service readiness but **does not silently enable Bluetooth**. A host with
+no selected optional services needs no privileged system-service changes.
+
 ### CachyOS dependency and service gates
 
 The installer audits the selected host's declared pacman and AUR requirements
