@@ -88,6 +88,12 @@ To replace an existing display manager, --replace-display-manager must also be s
 - Conflicting display manager: activation blocks without explicit consent; from a TTY restore the previous known-good login manager and config.
 - Interrupted sync/failed shared rebase: no forced push, no lost local commits or silent active-config changes.
 - Repeated link/setup: verify idempotence and truthful no-op vs changed summary.
+- Make offline theme generation fail **after a successful link transaction**:
+  the installer must report a failed phase and automatically restore the
+  modified managed-home links; package installations remain as-is and must
+  not be misrepresented as automatically rolled back.
+- Confirm arbitrary hosts/<host>/setup executable scripts are NOT automatically
+  run by dot install. Use dot host-setup to inspect and explicitly authorize.
 
 ## Acceptance evidence
 
