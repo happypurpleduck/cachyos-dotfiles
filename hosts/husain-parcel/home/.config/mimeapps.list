@@ -9,7 +9,6 @@ video/mpeg=mpv.desktop
 video/x-flv=mpv.desktop
 video/ogg=mpv.desktop
 audio/x-matroska=mpv.desktop
-
 image/png=org.gnome.Loupe.desktop
 image/jpeg=org.gnome.Loupe.desktop
 image/gif=org.gnome.Loupe.desktop
@@ -39,5 +38,6 @@ x-scheme-handler/https=google-chrome.desktop
 x-scheme-handler/about=google-chrome.desktop
 x-scheme-handler/unknown=google-chrome.desktop
 x-scheme-handler/claude-cli=claude-code-url-handler.desktop
+x-scheme-handler/t3code=com.t3tools.T3Code.desktop
 
 [Added Associations]
