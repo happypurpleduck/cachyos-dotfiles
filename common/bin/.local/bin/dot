@@ -73,17 +73,19 @@ each_file() {
 cmd_link() {
   need python3 python
   if [ "${1:-}" = "--dry-run" ]; then
-    cmd_doctor
+    cmd_doctor --strict
+    python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" --home "$HOME" --dry-run
     return
   fi
   python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" \
     --home "$HOME" "$@"
+  seed
 }
 # seed/: configs apps rewrite all the time (btop, waypaper, zed). Copied once, never linked.
 seed() {
   [ -d "$DOT/seed" ] || return 0
   (cd "$DOT/seed" && find . -type f) | sed 's|^\./||' | while read -r f; do
-    if [ ! -e "$HOME/$f" ]; then
+    if [ ! -e "$HOME/$f" ] && [ ! -L "$HOME/$f" ]; then
       mkdir -p "$HOME/$(dirname "$f")"
       cp "$DOT/seed/$f" "$HOME/$f"
       echo "   seeded ~/$f"
@@ -108,6 +110,15 @@ cmd_rollback() {
   need python3 python
   python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" \
     --home "$HOME" --rollback "$1"
+}
+
+# Verify effective managed symlinks without Stow.
+linked() {
+  [ -L "$2" ] || return 1
+  local actual expected
+  actual=$(realpath -- "$2" 2>/dev/null) || return 1
+  expected=$(realpath -- "$1" 2>/dev/null) || return 1
+  [ "$actual" = "$expected" ]
 }
 
 # Some apps save by writing a new file and renaming it over the old one, which
@@ -346,7 +357,11 @@ cmd_system_setup() {
   fi
 }
 cmd_install() {
-  if [ "${1:-}" = "--dry-run" ]; then cmd_doctor; return; fi
+  if [ "${1:-}" = "--dry-run" ]; then
+    cmd_doctor --strict
+    python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" --home "$HOME" --dry-run
+    return
+  fi
   local apply_system=0 a
   if [ "${1:-}" = "--apply-system" ]; then
     apply_system=1
