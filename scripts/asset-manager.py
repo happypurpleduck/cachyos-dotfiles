@@ -153,10 +153,8 @@ def swap_directory(target: Path, prepared: Path) -> None:
         if old.exists() or old.is_symlink():
             os.replace(old, target)
         raise
-    if old.is_dir() and not old.is_symlink():
-        shutil.rmtree(old)
-    elif old.is_symlink() or old.exists():
-        old.unlink()
+    if old.exists() or old.is_symlink():
+        print(f"   previous version retained at: {old}")
 
 
 def install_cursor(home: Path) -> None:
