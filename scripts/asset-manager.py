@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -43,6 +44,34 @@ def locations(home: Path) -> dict[str, Path]:
     }
 
 
+def group_installed(home: Path, name: str) -> bool:
+    """Do not mistake one surviving Lua/shader for a complete installed set."""
+    mpv = home / ".config/mpv"
+    manifest = mpv / ".dot-assets" / f"{name}.json"
+    if manifest.is_symlink() or not manifest.is_file() or manifest.stat().st_size > 2 * 1024 * 1024:
+        return False
+    try:
+        info = json.loads(manifest.read_text(encoding="utf-8"))
+        paths = info.get("files")
+        if info.get("version") != 1 or not isinstance(paths, dict) or not paths or len(paths) > 2048:
+            return False
+        for name_path, digest in paths.items():
+            rel = Path(name_path)
+            if (not isinstance(digest, str) or len(digest) != 64
+                    or rel.is_absolute() or ".." in rel.parts
+                    or (name == "uosc" and not name_path.startswith(("scripts/uosc/", "fonts/")))
+                    or (name == "anime4k" and not name_path.startswith("shaders/"))):
+                return False
+            target = mpv / rel
+            if target.is_symlink() or not target.is_file():
+                return False
+            if hashlib.sha256(target.read_bytes()).hexdigest() != digest:
+                return False
+        return True
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+
+
 def status(home: Path) -> dict[str, dict]:
     out: dict[str, dict] = {}
     for name, dest in locations(home).items():
@@ -54,13 +83,15 @@ def status(home: Path) -> dict[str, dict]:
                 for p in dest.rglob("*")
             )
         elif name == "uosc":
-            installed = dest.is_dir() and any(dest.rglob("*.lua"))
+            installed = group_installed(home, name)
         elif name == "t3code":
             installed = dest.is_file() and dest.stat().st_size > 100 * 1024
             if installed:
                 with dest.open("rb") as f:
                     installed = f.read(4) == b"\x7fELF"
-        elif name in ("thumbfast", "anime4k"):
+        elif name == "anime4k":
+            installed = group_installed(home, name)
+        elif name == "thumbfast":
             installed = dest.is_file() and dest.stat().st_size > 100
         else:
             installed = dest.exists()
@@ -184,12 +215,21 @@ def install_wallpapers(home: Path) -> None:
         swap_directory(target, staging)
 
 
-def promote_zip_group(mpv: Path, selected: dict[str, bytes]) -> None:
+def promote_zip_group(mpv: Path, selected: dict[str, bytes], name: str) -> None:
     """Stage and back up the entire file set before replacing any live file.
 
     Files outside the selected group are left alone. A failed Nth promotion
     restores every previously promoted file, including absent-before targets.
     """
+    if name not in ("uosc", "anime4k") or not selected:
+        raise ValueError("unknown/empty multi-file asset group")
+    # The installed-file manifest participates in the same exception-time
+    # backup/restore operation as the asset files themselves.
+    checksums = {key: hashlib.sha256(value).hexdigest() for key, value in selected.items()}
+    selected = dict(selected)
+    selected[f".dot-assets/{name}.json"] = (
+        json.dumps({"version": 1, "files": checksums}, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
     mpv.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".dot-asset-update-", dir=mpv) as tmp:
         transaction = Path(tmp)
@@ -241,7 +281,7 @@ def install_zip_group(home: Path, name: str) -> None:
                     if p.endswith(".glsl")}
         if not any("Clamp_Highlights" in p for p in selected):
             raise ValueError("Anime4K archive missing expected shader")
-    promote_zip_group(mpv, selected)
+    promote_zip_group(mpv, selected, name)
 
 
 def nightly_asset(releases: object) -> tuple[str, str]:

@@ -79,3 +79,6 @@ jobs:
           python3 tests/test-config-import.py
       - name: Installer recovery and host-script consent
         run: bash tests/test-install-recovery.sh
+
+      - name: Read-only inventory does not adopt unreviewed packages
+        run: bash tests/test-package-inventory.sh

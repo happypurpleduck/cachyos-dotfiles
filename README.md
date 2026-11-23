@@ -83,6 +83,14 @@ transaction ID, rather than leaving the HOME symlinks half-applied. Repeat
 `dot link` is now a precise no-op when the effective targets already match.
 The installer reports changed links and whether a recovery transaction exists.
 
+First-use files from `seed/` are **copied, never symlinked**, as part of the
+same verified home-file transaction as the managed links. Preflight rejects
+missing seed destinations below symlinked or blocked parent directories; existing
+seed destinations (including app-owned files) are left untouched. A rollback
+removes newly created seeds only if their contents remain unchanged, and refuses
+to delete any seed subsequently edited by an application or user. `dot unlink`
+intentionally leaves copy-once application state in place.
+
 Packages installed by pacman/AUR are **not automatically uninstalled**
 on failure; reversing those transactions or root-owned PAM backups requires
 separate user review. Optional assets may remain cached. A greeter is never
@@ -122,6 +130,9 @@ dot assets --asset wallpapers --force      # refresh the wallpaper collection
 storage, validate ZIP members and expected content, then promote complete
 assets. Existing AppImages survive failed downloads. Directory replacements
 retain their previous version beside the new one as a `.previous-...` backup.
+The uosc and Anime4K multi-file installs carry versioned file-checksum manifests:
+missing, modified or partly deleted members are reported as not installed and
+can be repaired through a targeted retry. Existing files survive a failed update.
 The T3 Code nightly resolver refuses missing/invalid GitHub release metadata
 and only installs a plausible ELF AppImage. Anime4K is pinned to v4.0.1;
 other downloads deliberately track the upstream latest URLs, and the resolved
@@ -148,6 +159,15 @@ a manual migration. Mise's official installer validates its downloaded
 binary against upstream release checksums; Zed uses its own built-in
 automatic updater. `dot apps` deliberately does not silently update either
 application during `dot install` or Git synchronization.
+
+Installed-package discovery is **not** an installation manifest: `dot packages`
+prints repository and foreign/local packages outside declared requirements,
+without changing tracked host files. Foreign entries are not necessarily AUR
+packages. To replicate a chosen extra on this machine, explicitly review and
+edit `hosts/<host>/packages.txt` for official repository packages or
+`hosts/<host>/aur.txt` for reviewed, allowlisted AUR exceptions. Previously
+pacman-installed mise/Zed are reported for manual migration, never adopted into
+managed host requirements or silently replaced.
 
 On a new machine, first install the shared system dependencies, then use
 `dot apps install mise zed` to bootstrap the upstream binaries. You can do

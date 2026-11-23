@@ -54,6 +54,11 @@ def requirements(repo: Path, host: str) -> tuple[set[str], set[str]]:
             (aur if item.startswith("aur:") else required).add(
                 item.removeprefix("aur:")
             )
+    upstream_only = (required | aur) & {"mise", "zed"}
+    if upstream_only:
+        raise ValueError("mise/Zed must use first-party self-managed installs; remove from package declarations: "
+                         + ", ".join(sorted(upstream_only)))
+
     # Every AUR dependency must be an explicit, reviewed exception.
     policy_path = repo / "packages/aur-exceptions.json"
     if aur and not policy_path.is_file():
