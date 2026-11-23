@@ -25,6 +25,42 @@ The package inventory is read-only and uses the local pacman database when
 present; no package/asset/service installation is implied. Display-manager
 status is informational only. It does not touch /etc or the greeter.
 
+### Applying file links (transactional)
+
+Once `dot doctor` has been reviewed, `dot link` now uses the effective
+per-file ownership map rather than stowing common and host directories in
+sequence. Each host may replace exactly one common target without replacing
+its sibling files. This retains the existing GNU Stow-shaped package layout
+but uses explicit symlinks to avoid Stow's folder-folding/overlay ambiguity.
+
+```sh
+dot link                     # refuse unapproved home-file collisions
+dot link --backup-conflicts  # explicitly back up colliding files/symlinks
+dot unlink                   # unlink only targets recorded in this host's manifest
+dot rollback TXID            # undo the latest applied link/unlink transaction
+```
+
+Each change has a unique ID under
+`~/.local/state/dotfiles-backup/transactions/`, including moved originals
+and a JSON journal. A link manifest is stored outside Git at
+`~/.local/state/cachyos-dotfiles/links-<host>.json`. App-created files next
+to managed links are untouched. Removed host overrides fall back to their
+common source; changes in other hosts are never applied. Rollback refuses to
+overwrite files replaced by an app since the transaction, or to rewind past
+newer transactions.
+
+**Migration caution:** legacy Stow *directory* symlinks are intentionally
+blocked. These may contain generated files or application data. A separate
+audited migration is needed before `dot link` can run on those installations;
+do not delete or flatten these links by hand. `dot unlink` without a new
+link-state manifest likewise refuses to guess ownership.
+
+System-level changes, startup/service activation, greeter migration and a
+full interrupted-install recovery path remain work in #6; the per-file
+transaction only covers managed links. Successful link application does not
+automatically reload Hyprland or restart Quickshell.
+
+
 **Important:** this is a preflight-only increment. The existing `dot link`
 and non-preview `dot install` retain their old behavior until the
 transactional/linker follow-ups under #2 and #6 have been reviewed.
@@ -128,11 +164,10 @@ and both can keep shared defaults for their remaining files.
 Run `dot plan` or `dot plan --json` to inspect the deterministic effective
 targets and their owners **without linking or changing anything**. It rejects
 duplicate common ownership and file-versus-parent conflicts and excludes
-ignored runtime/generated files. This is currently a preview/foundation for
-#2: **the existing `dot link` still uses the earlier Stow algorithm and
-does not yet apply this precedence policy safely**. Do not introduce
-same-target host overrides into a working session until the linker implementation
-and rollback safeguards are merged.
+ignored runtime/generated files. The effective target planner is the source of truth for `dot link`,
+`dot unlink`, and ownership checks. Actual application is blocked where
+legacy Stow directory links or unapproved file collisions exist; inspect
+`dot doctor` and the transaction notes above before first use.
 
 ### What's per machine
 
