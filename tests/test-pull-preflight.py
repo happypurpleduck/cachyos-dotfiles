@@ -83,6 +83,29 @@ with tempfile.TemporaryDirectory() as tmp:
     git(A, "rebase", sha)
     assert local_link.read_text() == "shared-v2\n"
 
+    # Remote edits to any selected-host control are active, including future
+    # control names. Other hosts' equivalent changes retain the fast path.
+    for control in ("services.txt", "setup", "future-control.conf"):
+        same = B / "hosts/A" / control
+        same.write_text("selected host update\n")
+        git(B, "add", "-A")
+        git(B, "commit", "-qm", f"current host {control}")
+        git(B, "push", "-q")
+        blocked = preview("--emit-sha", good=False)
+        assert "BLOCKED" in blocked.stderr and f"hosts/A/{control}" in blocked.stderr
+        sha = preview("--apply", "--emit-sha").stdout.strip()
+        git(A, "rebase", sha)
+        assert (A / "hosts/A" / control).read_text() == "selected host update\n"
+
+        other = B / "hosts/B" / control
+        other.write_text("other host update\n")
+        git(B, "add", "-A")
+        git(B, "commit", "-qm", f"other host {control}")
+        git(B, "push", "-q")
+        sha = preview("--emit-sha").stdout.strip()
+        git(A, "rebase", sha)
+        assert (A / "hosts/B" / control).read_text() == "other host update\n"
+
     # A new remote-owned path over an app-authored regular file is blocked.
     new_target = home / ".config/app/private"
     new_target.write_text("my data remains")
