@@ -78,6 +78,28 @@ transaction only covers managed links. Successful link application does not
 automatically reload Hyprland or restart Quickshell.
 
 
+### Initial theme and session readiness
+
+`dot install` now runs `scripts/first-login.py` immediately after linking
+and **before** enabling Hokum or other user services. This works from a TTY,
+without an existing Hyprland session. It generates the required Kitty, Hokum,
+Hyprland, and Zsh colour files and checks that they exist. Missing
+wallpaper downloads use a locally generated Catppuccin Mocha solid-colour PNG
+instead of relying on a missing `sword.jpg` file; an already selected valid
+wallpaper always takes priority.
+
+To troubleshoot a first login without affecting a running display server:
+
+```sh
+python3 "$(dot cd)/scripts/first-login.py" --check
+python3 "$(dot cd)/scripts/first-login.py"        # repair missing initial theme
+```
+
+The theme renderer no longer writes `/etc` browser policies during
+ordinary wallpaper changes; explicit system-level policy management must be
+handled separately. Host-specific audio/GPU/device settings remain under
+`hosts/<host>` and are not regenerated.
+
 ### System integration is always explicit
 
 ```sh

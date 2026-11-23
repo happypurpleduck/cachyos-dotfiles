@@ -44,3 +44,7 @@ jobs:
           python3 -m py_compile tests/test-portable-paths.py
           python3 tests/test-portable-paths.py
           bash tests/test-host-identity.sh
+      - name: Offline first-login/theme readiness
+        run: |
+          python3 -m py_compile scripts/first-login.py tests/test-first-login.py
+          python3 tests/test-first-login.py
