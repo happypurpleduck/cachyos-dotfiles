@@ -53,6 +53,12 @@ cmd_plan() {
   python3 "$DOT/scripts/effective-targets.py" --repo "$DOT" --host "$HOST" --home "$HOME" "$@"
 }
 
+# Read-only inventory for a currently running system; no sudo or Stow.
+cmd_doctor() {
+  need python3 python
+  python3 "$DOT/scripts/dot-doctor.py" --repo "$DOT" --host "$HOST" --home "$HOME" "$@"
+}
+
 # every repo file with its target: "<source>\t<target>"
 each_file() {
   local pkg
@@ -85,6 +91,7 @@ backup_conflicts() {
 }
 
 cmd_link() {
+  if [ "${1:-}" = "--dry-run" ]; then cmd_doctor; return; fi
   need stow stow
   local d
   backup_conflicts
@@ -371,6 +378,7 @@ cmd_install_packages() {
 }
 
 cmd_install() {
+  if [ "${1:-}" = "--dry-run" ]; then cmd_doctor; return; fi
   [ -d "$HOSTDIR" ] || { warn "no hosts/$HOST yet"; read -r -p ":: create it from the template now? [Y/n] " a; [[ ${a,,} == n* ]] || cmd_new_host "$HOST"; }
   if [ -n "$(opt_groups)" ]; then
     say "optional apps (answers are saved in hosts/$HOST/optional.txt)"
@@ -454,6 +462,9 @@ dot — $DOT on $HOST
   dot unlink           remove the links (repo files stay)
   dot status           git status + links that are missing or were replaced by an app
   dot plan [--json]    read-only effective common/host target precedence
+  dot doctor [--json|--strict]   preflight links, packages, display-manager status
+  dot install --dry-run          preview only; does not install or activate
+  dot link --dry-run             preview only; does not touch HOME
   dot diff [--stat] [path…]  tracked shared/host changes; ignores untracked files
   dot save [message]   commit tracked shared/host edits, rebase and push
   dot save --allow-staged MSG  also publish explicitly staged other-host/maintenance files
@@ -468,11 +479,12 @@ EOF
 }
 
 case ${1:-help} in
-  install) cmd_install ;;
-  link) cmd_link ;;
+  install) shift; cmd_install "$@" ;;
+  link) shift; cmd_link "$@" ;;
   unlink) cmd_unlink ;;
   status | st) cmd_status ;;
   plan) shift; cmd_plan "$@" ;;
+  doctor) shift; cmd_doctor "$@" ;;
   diff | d) shift; cmd_diff "$@" ;;
   save) shift; cmd_save "$@" ;;
   pull | sync) cmd_pull ;;
