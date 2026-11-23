@@ -113,6 +113,7 @@ else:
     assert "repo missing: none" in audit().stdout
     (binpath / "shelly").unlink()
     installed.write_text("git\n")
+    shelly_commands.unlink(missing_ok=True)
     assert "BLOCKED" in audit(ok=False).stdout
 
     (binpath / "shelly").write_text(shim)
