@@ -1,19 +1,19 @@
 # Implementation status for epic #1
 
-**As of 2026-11-23:** The scoped implementation is on **draft, stacked pull requests #10–#27**, with **follow-up PR #29 merged into the tip (#27 and integration #28)** after passing its offline regression suite. **Nothing has been merged into `main`, no actual machine has been modified, and the real CachyOS VM acceptance matrix has not run.**
+**As of 2026-11-23:** The scoped implementation is on stacked pull requests #10–#27, with review fixes from merged #29 integrated into #27/#28. All cumulative automated checks passed. The owner has opted to verify the setup directly on their own CachyOS systems; virtual-machine testing is **not** an acceptance or merge requirement.
 
-This document separates code coverage from operational verification so review/reflection can evaluate the actual state rather than conflating passing unit/fixture tests with a usable first login.
+This document distinguishes automated code verification from real-device behavior, which the owner will check during adoption. Real-device testing is not represented as already completed.
 
-| Issue | Implemented changes | Draft PRs | Remaining validation |
+| Issue | Implemented changes | PRs | Optional owner checks during use |
 | --- | --- | --- | --- |
-| #2 Host overrides | Deterministic effective per-file precedence for shared vs host files; transactional link/unlink, no-op reapplication and rollback; legacy folded-Stow migration; retired-link status | #12, #14, #15, #27, #29 | Test on both real CachyOS profile layouts |
-| #3 Two-way sync | Ownership-scoped saves and staged exceptions; gated remote fetch/preflight/approved rebase; exact-SHA sync; preview-first app config import | #11, #23, #26 | Observe cross-machine sync and rebase conflicts on two VMs |
-| #4 Prerequisites | CachyOS package/AUR audit, Zsh dependencies, required user service checks, host-only Bluetooth activation, Chrome host MIME defaults, read-only installed-package inventory separated from managed requirements | #17, #18, #22, #25, #29 | Validate real package inventory, Hokum and optional Bluetooth |
-| #5 Portability | Checkout discovery outside HOME default; account-agnostic launcher/seed; explicit machine enrollment; repo-wide source audit | #10, #18, #24 | Verify alternative usernames/checkout paths on VMs |
-| #6 Recovery | Doctor/dry-run, file transaction journal including copy-once seeds, explicit Stow migration, opt-in PAM/DDC, safe greeter staging and TTY rollback, installer failure checkpoints | #13–#16, #21, #27, #29 | Test login-manager recovery, PAM and interrupted install on VM snapshots |
-| #7 First login | Offline wallpaper/theme generation before services, missing-file fallback, greeter dependency checks, optional remote assets | #19, #20, #21, #27 | Verify Hyprland, Quickshell, Kitty, Hokum, lock, login, keyring and session |
-| #8 Assets | Safe optional asset retries, staged download/validation and checksummed MPV group manifests, previous-asset preservation, explicit first-party mise and Zed lifecycle | #20, #22, #29 | Exercise actual upstream installs and corrupted downloads on VM |
-| #9 Acceptance | Disposable two-host Git and HOME tests, fake systemd/greeter root, seed/link fault injection, repository audit, VM test matrix and blank results template | #10–#27, #29 | **Execute** and record two CachyOS VM scenarios in docs/verification-result-template.md |
+| #2 Host overrides | Deterministic effective per-file precedence for shared vs host files; transactional link/unlink, no-op reapplication and rollback; legacy folded-Stow migration; retired-link status | #12, #14, #15, #27, #29 | Confirm host overrides on actual configured systems |
+| #3 Two-way sync | Ownership-scoped saves and staged exceptions; gated remote fetch/preflight/approved rebase; exact-SHA sync; preview-first app config import | #11, #23, #26 | Try shared and host-only edits across normal machines |
+| #4 Prerequisites | CachyOS package/AUR audit, Zsh dependencies, required user service checks, host-only Bluetooth activation, Chrome host MIME defaults, read-only installed-package inventory separated from managed requirements | #17, #18, #22, #25, #29 | Confirm local package choices and optional services |
+| #5 Portability | Checkout discovery outside HOME default; account-agnostic launcher/seed; explicit machine enrollment; repo-wide source audit | #10, #18, #24 | Confirm any new system's account and checkout path |
+| #6 Recovery | Doctor/dry-run, file transaction journal including copy-once seeds, explicit Stow migration, opt-in PAM/DDC, safe greeter staging and TTY rollback, installer failure checkpoints | #13–#16, #21, #27, #29 | Keep rollback/TTY recovery instructions available before opt-in greeter changes |
+| #7 First login | Offline wallpaper/theme generation before services, missing-file fallback, greeter dependency checks, optional remote assets | #19, #20, #21, #27 | Confirm first login and optional desktop integrations |
+| #8 Assets | Safe optional asset retries, staged download/validation and checksummed MPV group manifests, previous-asset preservation, explicit first-party mise and Zed lifecycle | #20, #22, #29 | Use upstream installers only as needed |
+| #9 Automated regression and documentation | Disposable two-host Git and HOME tests, fake systemd/greeter root, seed/link fault injection, portability audit and owner-facing README | #10–#27, #29 | Optional runtime feedback, not a merge gate |
 
 ## Package-management principle
 
@@ -32,10 +32,18 @@ The only currently allowlisted AUR exceptions are **Hokum**, the core notificati
 - Installation does **not** provide a false whole-machine rollback guarantee. Installed packages, AUR packages, downloaded optional assets, and privileged PAM/DDC changes may need separate review/manual recovery. Never presume `dot rollback` undoes those operations.
 - `dot add` only imports configurations after a preview and explicit copy. It never moves home data, stages Git paths or publishes secrets automatically.
 
-## Review readiness
+## Merge readiness and owner adoption
 
-The cumulative integration diff can be reviewed without merging the individual stacked PRs. Review in issue order or PR order; apply only after a clean code/security review.
+The integrated changes have passed automated code/security review and regression
+CI in disposable environments. **No VM scenario or manual evidence collection
+is required for merge.** The owner will validate the actual desktop, login,
+audio/Bluetooth and A↔B synchronization directly on their CachyOS machines
+after pulling the changes.
 
-To declare the epic fully **accepted**, complete **both** documented CachyOS scenarios in [verification.md](verification.md) and record observed outcomes in [verification-result-template.md](verification-result-template.md). In particular, do not infer that Ubuntu CI can validate real greetd/PAM, Hyprland/Quickshell startup, session lock, Bluetooth, audio or hardware-specific device behavior.
+For safer initial adoption, use `dot doctor` and `dot install --dry-run`,
+review any home-file collisions, and keep a TTY and recovery path available
+before explicitly enabling a new greeter or privileged PAM changes. These
+are operational precautions, not a demand for separate test infrastructure.
 
-**Current verdict: implementation ready for review; operational acceptance pending real CachyOS validation.**
+**Verdict: eligible for merge subject to a green final CI run and GitHub
+mergeability. Actual-device results are owner-verified after adoption.**

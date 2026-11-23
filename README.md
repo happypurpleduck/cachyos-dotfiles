@@ -236,9 +236,9 @@ Rollback checks that no one has edited the new greeter since activation,
 then restores previous assets, config and service selection.
 
 The former direct `install-greeter` script is disabled because it deleted
-working greeter assets before validation. A fake-root automated test verifies
-these steps; the real login path still requires a separate CachyOS VM test
-before considering installation readiness accepted.
+working greeter assets before validation. A fake-root automated test checks staging and recovery logic. The owner
+will verify the actual login path on their machine when adopting the configuration;
+no virtual-machine test is required for merging.
 
 ### Optional system services belong to the host
 
@@ -282,15 +282,19 @@ optional keyring units produce warnings. An existing polkit agent is never
 disabled without a verified replacement. Login-shell changes are offered
 only with explicit consent (or left to `chsh`).
 
-## Multi-machine acceptance and recovery
+## Owner verification on CachyOS
 
-The canonical scenario-by-scenario CachyOS VM test plan, including a graphical
-desktop VM, minimal/CLI VM, A/B concurrent editing, host overrides, asset
-failures, greeter recovery and transaction rollback, is in
-[docs/verification.md](docs/verification.md). Record real VM results using
-[docs/verification-result-template.md](docs/verification-result-template.md).
-CI tests use disposable homes, Git remotes and fake systemd roots; **they do
-not prove a fresh physical/VM CachyOS login works**.
+Automated checks exercise disposable homes, two independent Git clones,
+host-specific overrides, rollback, package policy and simulated system services.
+They cannot prove real desktop, login-manager or hardware behavior.
+
+The owner will adopt this configuration directly on their own machine and
+verify it there. **No VM matrix, recorded evidence or additional manual test
+is a prerequisite for merging.** Start with `dot doctor` and
+`dot install --dry-run`, review any blockers and backups, then apply.
+Greeter activation, privileged PAM changes, host scripts and Bluetooth changes
+remain separately opt-in. Verify the session and multi-machine sync in normal
+use; report any defects as GitHub issues.
 
 ## New machine
 
