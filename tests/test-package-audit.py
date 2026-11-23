@@ -49,10 +49,12 @@ elif args==["-Slq"]:
     print(available.read_text(),end="")
 elif name=="shelly" and args[:2]==["install","aur"]:
     with installed.open("a") as f:
-        for p in args[2:]: f.write(p+"\n")
+        for p in args[2:]:
+            if not p.startswith("-"): f.write(p+"\n")
     Path(os.environ["MOCK_SHELLY_INVOCATIONS"]).write_text(" ".join(args))
 elif name=="pacman" and args[:1]==["-S"]:
     pkgs=[v for v in args if not v.startswith("-") and v not in ("-S",)]
+    Path(os.environ["MOCK_PACMAN_INVOCATIONS"]).write_text(" ".join(args))
     with installed.open("a") as f:
         for p in pkgs: f.write(p+"\n")
 else:
@@ -63,9 +65,11 @@ else:
         path.write_text(shim)
         path.chmod(0o755)
     shelly_commands = root / "shelly-invocations"
+    pacman_commands = root / "pacman-invocations"
     env = {
         **os.environ,
         "MOCK_SHELLY_INVOCATIONS": str(shelly_commands),
+        "MOCK_PACMAN_INVOCATIONS": str(pacman_commands),
         "MOCK_INSTALLED": str(installed),
         "MOCK_AVAILABLE": str(available),
         "PATH": str(binpath) + os.pathsep + os.environ["PATH"],
@@ -115,6 +119,21 @@ else:
     audit("--install", "--approve-aur")
     assert shelly_commands.read_text() == "install aur google-chrome hokum-bin mock-aura"
     assert "repo missing: none" in audit().stdout
+    # The personal dot install path may run without repeated confirmation.
+    # Only manifest-listed AUR packages are passed and both managers get
+    # their documented non-interactive options.
+    installed.write_text("git\n")
+    shelly_commands.unlink(missing_ok=True)
+    pacman_commands.unlink(missing_ok=True)
+    audit("--install", "--non-interactive", ok=False)
+    assert not shelly_commands.exists(), "unapproved direct AUR operation accepted"
+    assert installed.read_text() == "git\n"
+    audit("--install", "--approve-aur", "--non-interactive")
+    assert shelly_commands.read_text() == (
+        "install aur --needed --no-confirm google-chrome hokum-bin mock-aura"
+    )
+    assert "--noconfirm --needed --" in pacman_commands.read_text()
+    assert "repo missing: none" in audit().stdout
     (binpath / "shelly").unlink()
     installed.write_text("git\n")
     shelly_commands.unlink(missing_ok=True)
@@ -141,4 +160,4 @@ else:
     # Declined groups do not become attempted packages, unknown chosen groups fail.
     (repo / "hosts/A/optional.txt").write_text("nonexistent\n")
     assert "unknown optional group" in audit(ok=False).stderr
-print("package gates: Shelly-only AUR, missing CLI, repo availability and consent: OK")
+print("package gates: Shelly-only allowlist, authorization, noninteractive flags and missing-CLI blockers: OK")
