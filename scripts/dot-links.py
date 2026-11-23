@@ -92,6 +92,13 @@ def inspect(repo: Path, home: Path, host: str, backup_conflicts: bool, unlink: b
     old = state.get("entries", {})
     if not isinstance(old, dict):
         raise ValueError("invalid old manifest entries")
+    if unlink and not state_path(home, host).is_file():
+        raise ValueError("no link state exists; legacy GNU Stow directories require migration")
+    for path, source in old.items():
+        parsed = Path(path)
+        if (not isinstance(path, str) or not isinstance(source, str)
+                or parsed.is_absolute() or ".." in parsed.parts or "." in parsed.parts):
+            raise ValueError("invalid path or source in previous link manifest")
     check_target = load_doctor(repo)
     actions: list[dict] = []
     blockers: list[str] = []
@@ -182,6 +189,9 @@ def rollback(home: Path, host: str, txid: str, *, internal=False) -> None:
         print(f"already rolled back: {txid}")
         return
     statefile = state_path(home, host)
+    verify_no_parent_symlinks(home, statefile)
+    if statefile.is_symlink():
+        raise ValueError("refusing symlinked link-state manifest")
     if not internal:
         state = read_json(statefile)
         if state.get("last_transaction") != txid:
@@ -247,6 +257,10 @@ def apply(repo: Path, home: Path, host: str, *, backup_conflicts=False,
         return 0
 
     prior = state_path(home, host)
+    verify_no_parent_symlinks(home, prior)
+    verify_no_parent_symlinks(home, tx_root(home) / "new-transaction")
+    if prior.is_symlink():
+        raise ValueError("refusing symlinked link-state manifest")
     txid = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid4().hex[:12]
     directory = tx_root(home) / txid
     directory.mkdir(parents=True, exist_ok=False)
@@ -268,6 +282,8 @@ def apply(repo: Path, home: Path, host: str, *, backup_conflicts=False,
                 os.replace(target, backup)
             if action["source"] is not None:
                 source = Path(action["source"])
+                if not source.exists() and not source.is_symlink():
+                    raise ValueError(f"source disappeared before apply: {source}")
                 os.symlink(os.path.relpath(source, target.parent), target)
         write_json(prior, {
             "version": 1, "repo": str(repo), "host": host,
