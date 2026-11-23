@@ -30,4 +30,13 @@ fi
 grep -q 'run dot confirm-host' "$tmp/err"
 env -u DOTFILES HOME="$home" DOT_HOST=A "$dotcmd" pull >"$tmp/err" 2>&1 || true
 ! grep -q 'run dot confirm-host' "$tmp/err"
-echo 'local machine/profile enrollment guards: OK'
+# Unsafe names must be rejected before touching hosts/ or parent folders.
+for bad in '../other' 'nested/host' '..' '_template'; do
+  if env -u DOTFILES HOME="$home" DOT_HOST=A "$dotcmd" new-host "$bad" >"$tmp/err" 2>&1; then
+    echo "unsafe host name accepted: $bad" >&2; exit 1
+  fi
+  grep -Eq 'invalid hostname|reserved host' "$tmp/err"
+done
+[ ! -e "$checkout/other" ] && [ ! -e "$checkout/hosts/nested" ]
+
+echo 'host enrollment and new-host path validation: OK'
