@@ -456,9 +456,9 @@ cmd_assets() {
 
 cmd_system_setup() {
   case "${1:-}" in
-    "")
-      [ "$#" -eq 0 ] || die "usage: dot system-setup [--apply]"
-      "$DOT/system/setup"
+    "" | --dry-run)
+      [ "$#" -le 1 ] || die "usage: dot system-setup [--apply|--dry-run]"
+      "$DOT/system/setup" "$@"
       ;;
     --apply)
       [ "$#" -eq 1 ] || die "usage: dot system-setup [--apply]"
