@@ -8,10 +8,11 @@ trap 'rm -rf -- "$tmp"' EXIT
 
 git init -q --bare "$tmp/remote.git"
 git init -q -b main "$tmp/seed"
-mkdir -p "$tmp/seed/common/bin/.local/bin" "$tmp/seed/common/demo/.config/demo"
+mkdir -p "$tmp/seed/common/bin/.local/bin" "$tmp/seed/common/demo/.config/demo" "$tmp/seed/scripts"
 mkdir -p "$tmp/seed/hosts/A/home/.config/demo" "$tmp/seed/hosts/B/home/.config/demo"
 cp "$repo/common/bin/.local/bin/dot" "$tmp/seed/common/bin/.local/bin/dot"
 cp "$repo/install" "$tmp/seed/install"
+cp "$repo/scripts/effective-targets.py" "$repo/scripts/pull-preflight.py" "$tmp/seed/scripts/"
 printf 'shared base\n' >"$tmp/seed/common/demo/.config/demo/settings.conf"
 printf 'host A base\n' >"$tmp/seed/hosts/A/home/.config/demo/only.conf"
 printf 'host B base\n' >"$tmp/seed/hosts/B/home/.config/demo/only.conf"
@@ -50,7 +51,7 @@ if git --git-dir="$tmp/remote.git" cat-file -e "main:common/demo/.config/demo/lo
   echo 'dot save unexpectedly published an untracked file' >&2
   exit 1
 fi
-dot_for B pull
+dot_for B pull --apply
 [ "$(cat "$tmp/B/$settings")" = "shared from A" ]
 [ "$(cat "$tmp/B/hosts/A/home/.config/demo/only.conf")" = "host A edited" ]
 printf 'host B edited\n' >"$tmp/B/hosts/B/home/.config/demo/only.conf"
@@ -83,10 +84,15 @@ grep -q 'shared prospective conflict A' "$tmp/diff"
 dot_for A save "A shared conflict"
 printf 'shared prospective conflict B\n' >"$tmp/B/$settings"
 if dot_for B save "B shared conflict"; then
-  echo 'dot save silently overwrote a conflicting shared change' >&2
+  echo 'dot save bypassed a required remote shared-change preview' >&2
   exit 1
 fi
-# Rebase conflict must remain locally recoverable and the remote must retain A.
+# The blocked save left a local commit; explicitly applying the reviewed
+# remote change must detect the simultaneous same-file Git conflict.
+if dot_for B pull --apply; then
+  echo 'dot pull --apply silently resolved a conflicting shared edit' >&2
+  exit 1
+fi
 [ "$(git --git-dir="$tmp/remote.git" show "main:$settings")" = "shared prospective conflict A" ]
 git -C "$tmp/B" rebase --abort
 [ "$(git -C "$tmp/B" show "HEAD:$settings")" = "shared prospective conflict B" ]
