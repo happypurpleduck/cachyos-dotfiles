@@ -97,6 +97,24 @@ staging, display-manager conflict detection, and rollback safeguards are
 implemented and verified. System-wide rollback, service gating, and first-login
 checks remain open work under #6/#7.
 
+### CachyOS dependency and service gates
+
+The installer audits the selected host's declared pacman and AUR requirements
+**before running either package manager**. `python3 scripts/package-audit.py
+--repo "$(dot cd)" --host "$(hostname)"` is a read-only standalone check.
+A missing mandatory AUR package without an installed `paru` or `yay`
+blocks installation with an actionable message. An unavailable repo package
+also blocks rather than silently continuing. Install an AUR helper from the
+trusted CachyOS setup before retrying. Selected optional groups and host
+packages are isolated to their host. `dot doctor` uses the same audit.
+
+Shared Zsh aliases explicitly require `eza`, `bat`, and `fd`, and the
+installer now declares those packages. After linking, a missing Hokum systemd
+user unit is a blocking error rather than a swallowed service failure;
+optional keyring units produce warnings. An existing polkit agent is never
+disabled without a verified replacement. Login-shell changes are offered
+only with explicit consent (or left to `chsh`).
+
 ## New machine
 
 Install CachyOS (any desktop, or none), log in, then:
