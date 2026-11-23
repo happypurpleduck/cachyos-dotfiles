@@ -12,6 +12,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Parse shell scripts
         run: |
-          bash -n install common/bin/.local/bin/dot scripts/fetch-assets system/setup tests/test-checkout-discovery.sh
+          bash -n install common/bin/.local/bin/dot scripts/fetch-assets system/setup tests/test-checkout-discovery.sh tests/test-two-host-sync.sh
       - name: Checkout discovery and host validation
         run: bash tests/test-checkout-discovery.sh
+      - name: Two-host Git sync and conflict recovery
+        run: bash tests/test-two-host-sync.sh
