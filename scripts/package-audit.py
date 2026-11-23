@@ -36,9 +36,8 @@ def requirements(repo: Path, host: str) -> tuple[set[str], set[str]]:
     aur = read_packages(repo / "packages/aur.txt")
     aur |= read_packages(repo / "hosts" / host / "aur.txt")
     optional_path = repo / "hosts" / host / "optional.txt"
-    selected = read_packages(optional_path) if optional_path.exists() else set()
     # '!' records declined optional groups, not package names.
-    selected = set()
+    selected: set[str] = set()
     if optional_path.is_file():
         for raw in optional_path.read_text(encoding="utf-8").splitlines():
             line = raw.split("#", 1)[0].strip()
