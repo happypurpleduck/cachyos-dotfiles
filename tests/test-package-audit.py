@@ -46,19 +46,25 @@ if args==["-Qq"]:
     print(installed.read_text(),end="")
 elif args==["-Slq"]:
     print(available.read_text(),end="")
-elif args[:1]==["-S"]:
+elif name=="shelly" and args[:2]==["install","aur"]:
+    with installed.open("a") as f:
+        for p in args[2:]: f.write(p+"\n")
+    Path(os.environ["MOCK_SHELLY_INVOCATIONS"]).write_text(" ".join(args))
+elif name=="pacman" and args[:1]==["-S"]:
     pkgs=[v for v in args if not v.startswith("-") and v not in ("-S",)]
     with installed.open("a") as f:
         for p in pkgs: f.write(p+"\n")
 else:
     raise SystemExit(f"unexpected {name}: {args}")
 '''
-    for tool in ("pacman", "paru", "sudo"):
+    for tool in ("pacman", "shelly", "sudo"):
         path = binpath / tool
         path.write_text(shim)
         path.chmod(0o755)
+    shelly_commands = root / "shelly-invocations"
     env = {
         **os.environ,
+        "MOCK_SHELLY_INVOCATIONS": str(shelly_commands),
         "MOCK_INSTALLED": str(installed),
         "MOCK_AVAILABLE": str(available),
         "PATH": str(binpath) + os.pathsep + os.environ["PATH"],
@@ -85,15 +91,36 @@ else:
         "git", "eza", "bat", "fd", "krita", "hokum-bin", "mock-aura"
     }
     assert "repo missing: none" in audit().stdout
+    # Reset the log after the successful authorized scenario before testing
+    # that a subsequent unapproved installation never invokes Shelly.
+    shelly_commands.unlink(missing_ok=True)
 
     installed.write_text("git\n")
-    (binpath / "paru").unlink()
+    (binpath / "shelly").unlink()
     assert "BLOCKED" in audit(ok=False).stdout
+    assert "Shelly CLI is required" in audit(ok=False).stdout
     audit("--install", ok=False)
-    assert installed.read_text() == "git\n", "blocked audit installed partial packages"
+    assert installed.read_text() == "git\n", "missing Shelly installed packages"
 
-    (binpath / "paru").write_text(shim)
-    (binpath / "paru").chmod(0o755)
+    # A CachyOS install with only Shelly can install explicit AUR exceptions.
+    (binpath / "shelly").write_text(shim)
+    (binpath / "shelly").chmod(0o755)
+    shelly_report = audit()
+    assert "Shelly CLI: " in shelly_report.stdout
+    assert "shelly" in shelly_report.stdout
+    audit("--install", ok=False)
+    assert installed.read_text() == "git\n", "Shelly bypassed required AUR approval"
+    assert not shelly_commands.exists(), "Shelly executed before approval"
+    audit("--install", "--approve-aur")
+    assert shelly_commands.read_text() == "install aur hokum-bin mock-aura"
+    assert "repo missing: none" in audit().stdout
+    (binpath / "shelly").unlink()
+    installed.write_text("git\n")
+    shelly_commands.unlink(missing_ok=True)
+    assert "BLOCKED" in audit(ok=False).stdout
+
+    (binpath / "shelly").write_text(shim)
+    (binpath / "shelly").chmod(0o755)
     available.write_text("git\neza\nbat\n")  # fd/krita unavailable: block
     assert "repo unavailable: fd, krita" in audit(ok=False).stdout
     audit("--install", ok=False)
@@ -113,4 +140,4 @@ else:
     # Declined groups do not become attempted packages, unknown chosen groups fail.
     (repo / "hosts/A/optional.txt").write_text("nonexistent\n")
     assert "unknown optional group" in audit(ok=False).stderr
-print("package gates: missing AUR tool / repo availability / explicit install: OK")
+print("package gates: Shelly-only AUR, missing CLI, repo availability and consent: OK")
