@@ -99,6 +99,9 @@ with tempfile.TemporaryDirectory() as tmp:
 
     assert "all links ok" in call_dot("status").stdout
     add("seed/.config/waypaper/config.ini", "seed content")
+    enrolled = subprocess.run([str(dot), "confirm-host"], env=cli_env,
+                              input="A\n", capture_output=True, text=True)
+    assert enrolled.returncode == 0, (enrolled.stdout, enrolled.stderr)
     call_dot("link")
     seeded = home_a / ".config/waypaper/config.ini"
     assert seeded.read_text() == "seed content"
