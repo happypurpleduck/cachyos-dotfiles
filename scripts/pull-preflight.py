@@ -47,6 +47,7 @@ def preview(repo: Path, host: str, home: Path, *, apply=False,
     git(repo, "fetch", "--quiet", "--prune")
     upstream = git(repo, "rev-parse", "--abbrev-ref",
                    "--symbolic-full-name", "@{upstream}", output=True)
+    remote_sha = git(repo, "rev-parse", upstream, output=True)
     merge_base = git(repo, "merge-base", "HEAD", upstream, output=True)
     raw = subprocess.run(
         ["git", "-C", str(repo), "diff", "--name-only", "-z",
@@ -54,7 +55,7 @@ def preview(repo: Path, host: str, home: Path, *, apply=False,
     ).stdout
     changed = [p.decode("utf-8", "surrogateescape") for p in raw.split(b"\0") if p]
     active = [p for p in changed if active_path(p, host)]
-    result = {"upstream": upstream, "changed": changed,
+    result = {"upstream": upstream, "upstream_sha": remote_sha, "changed": changed,
               "active": active, "package_missing": []}
     if active and not apply:
         return result
@@ -109,6 +110,7 @@ def main() -> int:
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--install-prereqs", action="store_true")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--emit-sha", action="store_true")
     args = parser.parse_args()
     try:
         data = preview(args.repo.resolve(strict=True), args.host,
@@ -117,14 +119,18 @@ def main() -> int:
         if args.json:
             print(json.dumps(data, indent=2))
         else:
-            print(f"remote: {data['upstream']}")
+            stream = sys.stderr if args.emit_sha else sys.stdout
+            print(f"remote: {data['upstream']} ({data['upstream_sha'][:12]})", file=stream)
             for path in data["changed"]:
-                print(f"  {'ACTIVE' if path in data['active'] else 'foreign/metadata'}: {path}")
+                print(f"  {'ACTIVE' if path in data['active'] else 'foreign/metadata'}: {path}", file=stream)
             if data["active"] and not args.apply:
-                print("BLOCKED: remote changes would affect active/shared configuration.")
-                print("Review changes, then explicitly run: dot pull --apply")
+                print("BLOCKED: remote changes would affect active/shared configuration.", file=stream)
+                print("Review changes, then explicitly run: dot pull --apply", file=stream)
                 return 3
-            print("preflight passed; linked source will update only if Git pull succeeds")
+            if args.emit_sha:
+                print(data["upstream_sha"])
+            else:
+                print("preflight passed; linked source will update only by explicit rebase")
         return 0
     except (OSError, ValueError, subprocess.SubprocessError,
             tarfile.TarError) as exc:
