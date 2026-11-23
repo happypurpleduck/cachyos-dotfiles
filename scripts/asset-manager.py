@@ -20,6 +20,7 @@ import time
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from zipfile import ZipFile, BadZipFile
+from uuid import uuid4
 
 WALLS = "https://github.com/orangci/walls-catppuccin-mocha.git"
 CURSORS = "https://github.com/catppuccin/cursors/releases/latest/download/catppuccin-mocha-dark-cursors.zip"
@@ -52,7 +53,21 @@ def status(home: Path) -> dict[str, dict]:
         elif name == "zed":
             installed = bool(shutil.which("zed")) or dest.exists()
         elif name == "cursors":
-            installed = (dest / "index.theme").is_file() or (dest / "cursors").is_dir()
+            installed = (dest / "index.theme").is_file() and (dest / "cursors").is_dir()
+        elif name == "wallpapers":
+            installed = dest.is_dir() and any(
+                p.is_file() and p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")
+                for p in dest.rglob("*")
+            )
+        elif name == "uosc":
+            installed = dest.is_dir() and any(dest.rglob("*.lua"))
+        elif name == "t3code":
+            installed = dest.is_file() and dest.stat().st_size > 100 * 1024
+            if installed:
+                with dest.open("rb") as f:
+                    installed = f.read(4) == b"\x7fELF"
+        elif name in ("thumbfast", "anime4k"):
+            installed = dest.is_file() and dest.stat().st_size > 100
         else:
             installed = dest.exists()
         out[name] = {"installed": installed, "path": str(dest), "optional": True}
@@ -110,6 +125,7 @@ def archive_files(data: bytes) -> dict[str, bytes]:
     try:
         with ZipFile(io.BytesIO(data)) as z:
             result: dict[str, bytes] = {}
+            total_uncompressed = 0
             for info in z.infolist():
                 p = Path(info.filename)
                 if (info.is_dir() or p.is_absolute()
@@ -117,8 +133,9 @@ def archive_files(data: bytes) -> dict[str, bytes]:
                     if not info.is_dir():
                         raise ValueError("unsafe archive member: " + info.filename)
                     continue
-                if info.file_size > 40 * 1024 * 1024:
-                    raise ValueError("oversized zip member")
+                total_uncompressed += info.file_size
+                if info.file_size > 40 * 1024 * 1024 or total_uncompressed > 250 * 1024 * 1024:
+                    raise ValueError("oversized decompressed archive")
                 result[p.as_posix()] = z.read(info)
             return result
     except BadZipFile as exc:
@@ -127,7 +144,7 @@ def archive_files(data: bytes) -> dict[str, bytes]:
 
 def swap_directory(target: Path, prepared: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
-    old = target.with_name(target.name + ".previous-" + next(tempfile._get_candidate_names()))
+    old = target.with_name(target.name + ".previous-" + uuid4().hex[:12])
     if target.exists() or target.is_symlink():
         os.replace(target, old)
     try:
@@ -153,7 +170,8 @@ def install_cursor(home: Path) -> None:
               if name.startswith(base) and name[len(base):]}
     if not any(name.startswith("cursors/") for name in subset):
         raise ValueError("cursor ZIP has no cursor files")
-    with tempfile.TemporaryDirectory(dir=target.parent if target.parent.is_dir() else None) as tmp:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=target.parent) as tmp:
         prepared = Path(tmp) / "cursor-theme"
         prepared.mkdir()
         for name, data in subset.items():
