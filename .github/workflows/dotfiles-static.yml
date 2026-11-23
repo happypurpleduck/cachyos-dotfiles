@@ -21,3 +21,7 @@ jobs:
         run: |
           python3 -m py_compile scripts/effective-targets.py tests/test-effective-targets.py
           python3 tests/test-effective-targets.py
+      - name: Doctor and install dry-run safety
+        run: |
+          python3 -m py_compile scripts/dot-doctor.py tests/test-doctor.py
+          python3 tests/test-doctor.py
