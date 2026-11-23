@@ -30,4 +30,28 @@ fi
 grep -q 'run dot confirm-host' "$tmp/err"
 env -u DOTFILES HOME="$home" DOT_HOST=A "$dotcmd" pull >"$tmp/err" 2>&1 || true
 ! grep -q 'run dot confirm-host' "$tmp/err"
-echo 'local machine/profile enrollment guards: OK'
+# Unsafe names must be rejected before touching hosts/ or parent folders.
+for bad in '../other' 'nested/host' '..' '_template'; do
+  if env -u DOTFILES HOME="$home" DOT_HOST=A "$dotcmd" new-host "$bad" >"$tmp/err" 2>&1; then
+    echo "unsafe host name accepted: $bad" >&2; exit 1
+  fi
+  grep -Eq 'invalid hostname|reserved host' "$tmp/err"
+done
+[ ! -e "$checkout/other" ] && [ ! -e "$checkout/hosts/nested" ]
+
+# Explicit PAM/DDC setup must not bypass this host's enrollment.
+mkdir -p "$checkout/system" "$tmp/fakebin"
+printf '#!/bin/sh\necho system-setup >> "$ACTION_LOG"\n' > "$checkout/system/setup"
+printf '#!/bin/sh\necho sudo >> "$ACTION_LOG"\nexec "$@"\n' > "$tmp/fakebin/sudo"
+chmod +x "$checkout/system/setup" "$tmp/fakebin/sudo"
+export ACTION_LOG="$tmp/mutations"
+export PATH="$tmp/fakebin:$PATH"
+if env -u DOTFILES HOME="$home" DOT_HOST=B "$dotcmd" system-setup --apply >"$tmp/err" 2>&1; then
+  echo "unconfirmed profile invoked privileged setup" >&2; exit 1
+fi
+[ ! -e "$ACTION_LOG" ]
+env -u DOTFILES HOME="$home" DOT_HOST=B "$dotcmd" system-setup --dry-run >/dev/null
+env -u DOTFILES HOME="$home" DOT_HOST=A "$dotcmd" system-setup --apply
+[ "$(grep -c '^sudo' "$ACTION_LOG")" -eq 1 ]
+
+echo 'host enrollment, name validation and privileged system setup: OK'
