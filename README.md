@@ -90,6 +90,24 @@ scripts/            fetch-assets (downloads that don't belong in git)
 install             bootstrap for a fresh machine
 ```
 
+### Host overrides: precedence preview
+
+The intended target policy is **per-file**, not "host copies the entire app":
+`common/<app>/<home-path>` supplies a default, while
+`hosts/<hostname>/home/<home-path>` replaces exactly that target *on that
+host*. A host can also add files that do not exist in common. For example, one
+host can replace `~/.zshrc`, another can replace a Quickshell QML component,
+and both can keep shared defaults for their remaining files.
+
+Run `dot plan` or `dot plan --json` to inspect the deterministic effective
+targets and their owners **without linking or changing anything**. It rejects
+duplicate common ownership and file-versus-parent conflicts and excludes
+ignored runtime/generated files. This is currently a preview/foundation for
+#2: **the existing `dot link` still uses the earlier Stow algorithm and
+does not yet apply this precedence policy safely**. Do not introduce
+same-target host overrides into a working session until the linker implementation
+and rollback safeguards are merged.
+
 ### What's per machine
 
 The shared config never names hardware. Anything that does goes in the host directory:
