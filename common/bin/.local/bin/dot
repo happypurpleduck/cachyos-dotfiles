@@ -389,6 +389,12 @@ cmd_greeter() {
   esac
 }
 
+# Explicit, user-owned vendor installation; never part of unattended dot install.
+cmd_apps() {
+  need python3 python
+  python3 "$DOT/scripts/upstream-apps.py" --home "$HOME" "$@"
+}
+
 cmd_assets() {
   need python3 python
   python3 "$DOT/scripts/asset-manager.py" --home "$HOME" "$@"
@@ -533,6 +539,9 @@ dot — $DOT on $HOST
   dot install --apply-system  explicitly include limited PAM/DDC system setup
   dot system-setup [--apply]  preview or apply limited PAM/DDC setup
   dot greeter [--stage|--activate|--rollback TXID]  safe login-manager control
+  dot apps status             first-party mise/Zed install type and update policy
+  dot apps install mise zed   explicit vendor installer bootstraps (no pacman/AUR)
+  dot apps update mise        use mise self-update; Zed updates on restart
   dot assets --status          inspect optional downloads without network
   dot assets --asset t3code    fetch one optional asset (use --force to refresh)
   dot link             safely link this host's effective per-file configuration
@@ -563,6 +572,7 @@ case ${1:-help} in
   install) shift; cmd_install "$@" ;;
   system-setup) shift; cmd_system_setup "$@" ;;
   assets) shift; cmd_assets "$@" ;;
+  apps) shift; cmd_apps "$@" ;;
   greeter) shift; cmd_greeter "$@" ;;
   link) shift; cmd_link "$@" ;;
   unlink) shift; cmd_unlink "$@" ;;
