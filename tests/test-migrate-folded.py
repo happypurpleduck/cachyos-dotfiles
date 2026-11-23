@@ -39,6 +39,7 @@ with tempfile.TemporaryDirectory() as temp:
     common_dir = "common/hypr/.config/hypr"
     shared = write(f"{common_dir}/hyprland.lua", "SHARED\n")
     generated = write(f"{common_dir}/mocha-theme.lua", "GENERATED but gitignored\n")
+    (repo / common_dir / "empty-original-directory").mkdir()
     write(".gitignore", "common/hypr/.config/hypr/mocha-theme.lua\n")
     host_override = write(
         "hosts/A/home/.config/hypr/hyprland.lua", "HOST A\n"
@@ -81,6 +82,7 @@ with tempfile.TemporaryDirectory() as temp:
     assert (folded / "hyprland.lua").is_symlink()
     assert (folded / "hyprland.lua").read_text() == "HOST A\n"
     assert (folded / "host.lua").read_text() == "host display\n"
+    assert (folded / "empty-original-directory").is_dir()
     assert (folded / "mocha-theme.lua").is_symlink()
     assert (folded / "mocha-theme.lua").read_text() == "GENERATED but gitignored\n"
     assert shared.read_text() == "SHARED\n" and host_override.read_text() == "HOST A\n"
@@ -92,6 +94,11 @@ with tempfile.TemporaryDirectory() as temp:
     assert "new user file" in result.stderr
     assert user_file.read_text() == "must survive"
     user_file.unlink()
+    new_user_dir = folded / "empty-user-created-directory"
+    new_user_dir.mkdir()
+    result = run("dot-links.py", "--rollback", migrated_id, ok=False)
+    assert "new user directory" in result.stderr
+    new_user_dir.rmdir()
 
     # Register effective links, then rollback in reverse transaction order.
     applied = run("dot-links.py")
