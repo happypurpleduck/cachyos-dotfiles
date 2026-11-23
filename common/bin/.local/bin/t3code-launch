@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Portable T3 Code desktop launcher; the desktop spec does not expand $HOME.
+set -euo pipefail
+app="$HOME/.local/opt/t3code/T3-Code.AppImage"
+if [ ! -x "$app" ]; then
+  printf 'T3 Code is not installed for %s: %s\n' "$USER" "$app" >&2
+  exit 127
+fi
+exec "$app" --password-store=gnome-libsecret "$@"
