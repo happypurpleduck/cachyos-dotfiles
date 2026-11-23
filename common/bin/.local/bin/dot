@@ -390,6 +390,19 @@ cmd_install() {
   else
     warn "optional gnome-keyring-daemon.socket not found; keeping existing keyring configuration"
   fi
+  # Shell selection is personal to each host; never silently change it.
+  if command -v zsh >/dev/null && [ "$(getent passwd "$(id -un)" | cut -d: -f7)" != "$(command -v zsh)" ]; then
+    if [ -t 0 ]; then
+      read -r -p ":: switch your login shell to zsh? [y/N] " answer
+      if [[ ${answer,,} == y* ]]; then
+        chsh -s "$(command -v zsh)" || die "could not change login shell"
+      else
+        warn "keeping existing login shell"
+      fi
+    else
+      warn "login shell is not zsh; run chsh -s $(command -v zsh) manually if desired"
+    fi
+  fi
   # Do not disable another polkit agent without a confirmed replacement.
   fc-cache -f >/dev/null
   if [ -x "$HOSTDIR/setup" ]; then
