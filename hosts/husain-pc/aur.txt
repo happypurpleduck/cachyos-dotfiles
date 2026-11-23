@@ -1,2 +1,2 @@
 # husain-pc — AUR packages beyond packages/aur.txt (snapshot 2026-11-19).
-google-chrome
+# Google Chrome is a shared default from packages/aur.txt.
