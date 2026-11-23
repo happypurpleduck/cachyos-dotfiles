@@ -46,13 +46,13 @@ with tempfile.TemporaryDirectory() as tmp:
         "case \"$cmd\" in\n"
         "  is-enabled|is-active)\n"
         "    grep -qx \"$unit\" \"$MOCK_SERVICES\" && exit 0 || exit 1 ;;\n"
-        "  enable) printf '%s\\n' \"$unit\" > \"$MOCK_SERVICES\"; if [ \"${MOCK_FAIL_GREETD:-0}\" = 1 ] && [ \"$unit\" = greetd.service ]; then exit 1; fi; exit 0 ;;\n"
-        "  disable) sed -i \"/^$unit$/d\" \"$MOCK_SERVICES\"; exit 0 ;;\n"
+        "  enable) printf '%s\\n' \"$unit\" > \"$MOCK_SERVICES\"; if [ \"${MOCK_FAIL_GREETD:-0}\" = 1 ] && [ \"$unit\" = greetd.service ]; then exit 1; fi; ln -sfn \"../$unit\" \"$MOCK_DM_LINK\"; exit 0 ;;\n"
+        "  disable) sed -i \"/^$unit$/d\" \"$MOCK_SERVICES\"; [ \"$(readlink \"$MOCK_DM_LINK\" 2>/dev/null)\" = \"../$unit\" ] && rm -f \"$MOCK_DM_LINK\"; exit 0 ;;\n"
         "esac\nexit 2\n"
     )
     sh.chmod(0o755)
     env = {**os.environ, "MOCK_CALLS": str(calls),
-           "MOCK_SERVICES": str(service_state)}
+           "MOCK_SERVICES": str(service_state), "MOCK_DM_LINK": str(dm)}
 
     def run(*args, good=True):
         result = subprocess.run(
@@ -115,7 +115,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert not live.exists()
 
     # Updating an existing greetd must never turn off the only login manager.
-    dm.unlink()
+    dm.unlink(missing_ok=True)
     service_state.write_text("greetd.service\n")
     cfg.write_text("existing greetd config\n")
     prior = cfg.read_bytes()
