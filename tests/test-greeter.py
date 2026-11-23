@@ -46,7 +46,7 @@ with tempfile.TemporaryDirectory() as tmp:
         "case \"$cmd\" in\n"
         "  is-enabled|is-active)\n"
         "    grep -qx \"$unit\" \"$MOCK_SERVICES\" && exit 0 || exit 1 ;;\n"
-        "  enable) printf '%s\\n' \"$unit\" > \"$MOCK_SERVICES\"; exit 0 ;;\n"
+        "  enable) printf '%s\\n' \"$unit\" > \"$MOCK_SERVICES\"; if [ \"${MOCK_FAIL_GREETD:-0}\" = 1 ] && [ \"$unit\" = greetd.service ]; then exit 1; fi; exit 0 ;;\n"
         "  disable) sed -i \"/^$unit$/d\" \"$MOCK_SERVICES\"; exit 0 ;;\n"
         "esac\nexit 2\n"
     )
@@ -114,4 +114,27 @@ with tempfile.TemporaryDirectory() as tmp:
     assert "restart" not in calls.read_text()
     assert not live.exists()
 
-print("isolated greeter stage, competing display manager, rollback & no restart: OK")
+    # Updating an existing greetd must never turn off the only login manager.
+    dm.unlink()
+    service_state.write_text("greetd.service\n")
+    cfg.write_text("existing greetd config\n")
+    prior = cfg.read_bytes()
+    env["MOCK_FAIL_GREETD"] = "1"
+    run("--activate", "--confirm", "ACTIVATE greetd", good=False)
+    env.pop("MOCK_FAIL_GREETD")
+    assert service_state.read_text().strip() == "greetd.service"
+    assert cfg.read_bytes() == prior
+
+    # Successful reactivation followed by explicit rollback also keeps greetd.
+    run("--activate", "--confirm", "ACTIVATE greetd")
+    journals = sorted((fake / "var/backups/cachyos-dotfiles/greeter").glob("*/journal.json"))
+    current = [j for j in journals if json.loads(j.read_text())["status"] == "active"]
+    assert len(current) == 1
+    journal = json.loads(current[0].read_text())
+    assert journal["previous_greetd_enabled"] is True
+    assert journal["previous_greetd_active"] is True
+    run("--rollback", current[0].parent.name)
+    assert service_state.read_text().strip() == "greetd.service"
+    assert cfg.read_bytes() == prior
+
+print("isolated greeter staging, rollback, and pre-enabled greetd recovery: OK")
