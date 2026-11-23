@@ -48,7 +48,7 @@ def package_name(relative: Path) -> str:
         return parts[1]
     if len(parts) >= 4 and parts[:2] == (".local", "share"):
         return parts[2]
-    if len(parts) >= 4 and parts[:2] == (".local", "bin"):
+    if len(parts) >= 3 and parts[:2] == (".local", "bin"):
         return "bin"
     name = relative.name.lstrip(".")
     return re.sub(r"[^A-Za-z0-9_.-]", "-", name.split(".")[0].removesuffix("rc")) or "misc"
@@ -120,6 +120,7 @@ def inspect(repo: Path, home: Path, host: str, files: list[str],
             "src": src, "dst": dst, "rel": rel, "owner": owner, "data": data,
             "mode": stat.S_IMODE(src.stat().st_mode),
             "exists": exists, "different": different,
+            "old_sha256": hashlib.sha256(old).hexdigest() if old is not None else None,
             "sha256": hashlib.sha256(data).hexdigest(),
         })
     return results
@@ -140,6 +141,8 @@ def apply(repo: Path, home: Path, entries: list[dict]) -> None:
                 raise ValueError(f"destination changed during import: {dest}")
             if dest.exists() != item["exists"]:
                 raise ValueError(f"destination appeared/disappeared during import: {dest}")
+            if dest.is_file() and hashlib.sha256(dest.read_bytes()).hexdigest() != item["old_sha256"]:
+                raise ValueError(f"destination changed since preview; refusing overwrite: {dest}")
             dest.parent.mkdir(parents=True, exist_ok=True)
             backup = None
             if item["exists"]:
