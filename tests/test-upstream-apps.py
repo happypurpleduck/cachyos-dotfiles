@@ -30,12 +30,18 @@ with tempfile.TemporaryDirectory() as temp:
         # Explicit vendor script acts in the target HOME; no real networking.
         mise_script = b"""#!/bin/sh
 mkdir -p "$HOME/.local/bin"
-printf '#!/bin/sh\nprintf "%s" "$*" > "$HOME/updated"\n' > "$HOME/.local/bin/mise"
+cat > "$HOME/.local/bin/mise" <<'EOF'
+#!/bin/sh
+printf '%s' "$*" > "$HOME/updated"
+EOF
 chmod 755 "$HOME/.local/bin/mise"
 """
         zed_script = b"""#!/bin/sh
 mkdir -p "$HOME/.local/zed.app/bin"
-printf '#!/bin/sh\nexit 0\n' > "$HOME/.local/zed.app/bin/zed"
+cat > "$HOME/.local/zed.app/bin/zed" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
 chmod 755 "$HOME/.local/zed.app/bin/zed"
 printf '%s' "$ZED_CHANNEL" > "$HOME/zed-channel"
 """
