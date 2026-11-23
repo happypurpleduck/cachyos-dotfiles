@@ -70,7 +70,7 @@ with tempfile.TemporaryDirectory() as temporary:
             assert own in rows, own
             assert other not in rows, other
         assert rows[".config/editor/settings.conf"]["owner"] == "common:editor"
-        assert "common/hypr/.config/hypr/generated.conf" not in {
+        assert str(checkout / "common/hypr/.config/hypr/generated.conf") not in {
             str(x["source"]) for x in plan["entries"]
         }
         if host == "B":
