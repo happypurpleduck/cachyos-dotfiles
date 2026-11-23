@@ -45,9 +45,23 @@ print("mock first-login complete")
 PY
 printf '#!/bin/sh\nexit 0\n' > "$checkout/scripts/fetch-assets"
 chmod +x "$checkout/scripts/fetch-assets"
-printf '#!/bin/sh\nexit 0\n' > "$fakebin/systemctl"
+cat > "$fakebin/systemctl" <<'SH'
+#!/bin/sh
+# This fixture tracks actual is-enabled state; do not touch systemd.
+case "$1 $2" in
+  "--user is-enabled") grep -qx "$4" "$UNIT_STATE" 2>/dev/null ;;
+  "--user enable") grep -qx "$3" "$UNIT_STATE" 2>/dev/null || echo "$3" >> "$UNIT_STATE" ;;
+  "--user disable") sed -i "\|^$3$|d" "$UNIT_STATE" ;;
+  *) exit 0 ;;
+esac
+SH
+cat > "$fakebin/sudo" <<'SH'
+#!/bin/sh
+echo "$*" >> "$HOME/sudo-invoked"
+exit 1
+SH
 printf '#!/bin/sh\nexit 0\n' > "$fakebin/fc-cache"
-chmod +x "$fakebin/systemctl" "$fakebin/fc-cache"
+chmod +x "$fakebin/systemctl" "$fakebin/fc-cache" "$fakebin/sudo"
 cat > "$checkout/hosts/A/setup" <<'SH'
 #!/bin/sh
 echo ran > "$HOME/host-setup-invoked"
@@ -58,6 +72,8 @@ dot="$checkout/common/bin/.local/bin/dot"
 export HOME="$home"
 export DOT_HOST=A
 export PATH="$fakebin:$PATH"
+export UNIT_STATE="$tmp/enabled-units"
+: > "$UNIT_STATE"
 unset DOTFILES
 printf 'A\n' | "$dot" confirm-host >/dev/null 2>&1
 
@@ -82,4 +98,22 @@ SIMULATE_THEME_FAIL=0 "$dot" install >"$tmp/output" 2>"$tmp/error"
 printf 'RUN HOST SETUP\n' | "$dot" host-setup --apply >/dev/null
 [ "$(cat "$home/host-setup-invoked")" = ran ]
 
-echo 'installer checkpoint rollback, retry and explicit host setup: OK'
+# A later privileged-phase failure must undo only newly enabled user units.
+: > "$UNIT_STATE"
+if "$dot" install --apply-system >"$tmp/output" 2>"$tmp/error"; then
+    echo "system-setup failure must fail installation" >&2; exit 1
+fi
+grep -q 'restored initially disabled user unit: hokum.service' "$tmp/error"
+! grep -qx 'hokum.service' "$UNIT_STATE"
+! grep -qx 'gnome-keyring-daemon.socket' "$UNIT_STATE"
+[ -f "$home/sudo-invoked" ]
+
+# An already-enabled user service must survive the same failure.
+printf 'hokum.service\n' > "$UNIT_STATE"
+if "$dot" install --apply-system >"$tmp/output" 2>"$tmp/error"; then
+    echo "system-setup failure must fail installation" >&2; exit 1
+fi
+grep -qx 'hokum.service' "$UNIT_STATE"
+! grep -qx 'gnome-keyring-daemon.socket' "$UNIT_STATE"
+
+echo 'installer checkpoint rollback, prior unit state, and explicit host setup: OK'
