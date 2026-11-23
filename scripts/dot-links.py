@@ -395,6 +395,39 @@ def apply(repo: Path, home: Path, host: str, *, backup_conflicts=False,
     return 0
 
 
+def install_preflight(repo: Path, home: Path, host: str) -> int:
+    """Read-only concise summary for first-install collisions and unsafe targets."""
+    _, _, actions, unsafe = inspect(repo, home, host, True, False)
+    check_target = load_doctor(repo)
+    collisions = []
+    for entry in load_plan(repo, host):
+        status = check_target(home, entry, repo)["status"]
+        if status in ("collision-file", "foreign-symlink"):
+            collisions.append((entry.path, status))
+    if unsafe:
+        print(f"Link preflight: {len(unsafe)} unsafe blocker(s); "
+              "no packages or home files changed", file=sys.stderr)
+        for message in unsafe[:12]:
+            print(f"  BLOCKED: {message}", file=sys.stderr)
+        if len(unsafe) > 12:
+            print(f"  ... and {len(unsafe) - 12} more; inspect dot doctor",
+                  file=sys.stderr)
+        return 2
+    if collisions:
+        print(f"Link preflight: {len(collisions)} existing home config file(s)/"
+              f"symlink(s) conflict ({len(actions)} planned changes).")
+        for path, status in collisions[:12]:
+            print(f"  {status}: ~/{path}")
+        if len(collisions) > 12:
+            print(f"  ... and {len(collisions) - 12} more")
+        print("Backups of these individual files are kept in a managed "
+              "transaction and can be rolled back if links are unchanged.")
+        return 3
+    print(f"Link preflight: {len(actions)} planned changes, "
+          "no existing-file collisions")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, required=True)
@@ -405,12 +438,18 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--rollback", metavar="TXID")
     parser.add_argument("--check-retired", action="store_true")
+    parser.add_argument("--install-preflight", action="store_true",
+                        help="read-only concise collision summary")
     args = parser.parse_args()
     try:
         repo = args.repo.resolve(strict=True)
         home = args.home.expanduser().resolve(strict=True)
         # Guard every operation with the same host identity checks as planner.
         load_plan(repo, args.host)
+        if args.install_preflight:
+            if args.unlink or args.rollback or args.backup_conflicts or args.dry_run:
+                raise ValueError("install preflight cannot be combined with link actions")
+            return install_preflight(repo, home, args.host)
         if args.check_retired:
             retired = retired_links(repo, home, args.host)
             for entry in retired:
