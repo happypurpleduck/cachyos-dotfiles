@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Optional CachyOS desktop assets: verified, staged, and safely retryable.
 
-No remote shell installers. Optional failures are reported but do not prevent
-the core dotfiles link/first-login fallback from working.
+No remote shell installers. Self-updating upstream applications are handled
+separately by upstream-apps.py; optional failures do not block first login.
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ UOSC = "https://github.com/tomasklaen/uosc/releases/latest/download/uosc.zip"
 THUMBFAST = "https://raw.githubusercontent.com/po5/thumbfast/master/thumbfast.lua"
 ANIME4K = "https://github.com/bloc97/Anime4K/releases/download/v4.0.1/Anime4K_v4.0.zip"
 NIGHTLIES = "https://api.github.com/repos/pingdotgg/t3code/releases?per_page=20"
-NAMES = ("wallpapers", "cursors", "uosc", "thumbfast", "anime4k", "t3code", "zed", "mise")
+NAMES = ("wallpapers", "cursors", "uosc", "thumbfast", "anime4k", "t3code")
 
 
 def locations(home: Path) -> dict[str, Path]:
@@ -40,19 +40,13 @@ def locations(home: Path) -> dict[str, Path]:
         "thumbfast": mpv / "scripts/thumbfast.lua",
         "anime4k": mpv / "shaders/Anime4K_Clamp_Highlights.glsl",
         "t3code": home / ".local/opt/t3code/T3-Code.AppImage",
-        "zed": home / ".local/zed.app",
-        "mise": home / ".local/bin/mise",
     }
 
 
 def status(home: Path) -> dict[str, dict]:
     out: dict[str, dict] = {}
     for name, dest in locations(home).items():
-        if name == "mise":
-            installed = bool(shutil.which("mise")) or dest.is_file()
-        elif name == "zed":
-            installed = bool(shutil.which("zed")) or dest.exists()
-        elif name == "cursors":
+        if name == "cursors":
             installed = (dest / "index.theme").is_file() and (dest / "cursors").is_dir()
         elif name == "wallpapers":
             installed = dest.is_dir() and any(
@@ -270,15 +264,7 @@ def install_asset(home: Path, name: str) -> None:
         atomic_file(loc[name], body)
     elif name == "t3code":
         install_t3code(home)
-    elif name == "zed":
-        raise ValueError("manual optional install only: use the CachyOS/Arch zed package; no remote shell installer")
-    elif name == "mise":
-        binary = shutil.which("mise") or (
-            str(loc["mise"]) if loc["mise"].is_file() else None
-        )
-        if not binary:
-            raise ValueError("manual optional install only: install mise from a trusted package source")
-        subprocess.run([binary, "install", "--yes"], check=True, timeout=300)
+
 
 
 def main() -> int:
