@@ -304,7 +304,7 @@ Install CachyOS (any desktop, or none), log in, then:
 sudo pacman -S --needed git openssh github-cli
 gh auth login                       # SSH, so the private repo can be cloned
 git clone git@github.com:happypurpleduck/cachyos-dotfiles.git ~/cachyos-dotfiles
-~/cachyos-dotfiles/install
+~/cachyos-dotfiles/install             # creates and confirms a new host profile interactively
 ```
 
 The checkout can also live in another directory. After installation, `dot`
@@ -318,8 +318,16 @@ example `DOT_HOST=laptop dot status`. Keep **one distinct host directory per
 physical machine**; do not select another machine's hardware profile merely
 because its settings look similar. `hosts/_template` is never selectable.
 
-Before first use **on each physical machine**, create a new host profile if
-needed and confirm it explicitly:
+**First install:** `./install` detects a missing host profile, asks before
+creating `hosts/<hostname>/` from `hosts/_template`, and prompts you to
+confirm the selected machine by typing its hostname. It uses the repository's
+own `./common/bin/.local/bin/dot` script, so `dot` does **not** need to be
+installed yet. On a returning/confirmed machine, the confirmation step is a
+no-op. If you want to review and commit the new host-specific settings before
+applying packages, links or services, use `./install --prepare-host` and then
+`./install`. Read-only `./install --dry-run` never creates a host profile.
+
+For manual control, you can also create/confirm the profile explicitly:
 
 ```sh
 dot new-host my-new-host       # only if it doesn't exist yet
