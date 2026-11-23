@@ -124,11 +124,14 @@ def audit(repo: Path, host: str) -> dict:
     }
 
 
-def aur_install_command(helper: str, packages: list[str]) -> list[str]:
+def aur_install_command(helper: str, packages: list[str], *, non_interactive: bool = False) -> list[str]:
     """Shelly's explicitly selected AUR install operation; no fallback backend."""
     if Path(helper).name != "shelly":
         raise ValueError("only Shelly is supported for AUR installations")
-    return [helper, "install", "aur", *packages]
+    command = [helper, "install", "aur"]
+    if non_interactive:
+        command += ["--needed", "--no-confirm"]
+    return [*command, *packages]
 
 
 def main() -> int:
@@ -139,7 +142,9 @@ def main() -> int:
     parser.add_argument("--install", action="store_true",
                         help="install audited missing packages (explicit opt-in)")
     parser.add_argument("--approve-aur", action="store_true",
-                        help="explicitly permit allowlisted AUR exception installs")
+                        help="permit allowlisted AUR exception installs")
+    parser.add_argument("--non-interactive", action="store_true",
+                        help="skip pacman/Shelly prompts for explicitly declared packages")
     args = parser.parse_args()
     try:
         data = audit(args.repo.resolve(strict=True), args.host)
@@ -168,11 +173,14 @@ def main() -> int:
             )
         if args.install:
             if data["missing_repo"]:
-                subprocess.run(["sudo", "pacman", "-S", "--needed", "--",
+                subprocess.run(["sudo", "pacman", "-S",
+                                *(["--noconfirm"] if args.non_interactive else []),
+                                "--needed", "--",
                                 *data["missing_repo"]], check=True)
             if data["missing_aur"]:
                 subprocess.run(aur_install_command(data["aur_helper"],
-                                                   data["missing_aur"]), check=True)
+                                                   data["missing_aur"],
+                                                   non_interactive=args.non_interactive), check=True)
             verified = audit(args.repo.resolve(strict=True), args.host)
             if verified["missing_repo"] or verified["missing_aur"]:
                 raise ValueError("package manager reported success but required packages remain absent")
