@@ -122,7 +122,7 @@ with tempfile.TemporaryDirectory() as temporary:
         asset.os.replace = fail_second
         try:
             try:
-                asset.promote_zip_group(mpv, group)
+                asset.promote_zip_group(mpv, group, "uosc")
                 assert False, "partial asset update erroneously succeeded"
             except OSError:
                 pass
@@ -133,9 +133,31 @@ with tempfile.TemporaryDirectory() as temporary:
         if existing:
             assert first.read_bytes() == b"previous main"
             assert second.read_bytes() == b"previous two"
-    asset.promote_zip_group(mpv, group)
+    asset.promote_zip_group(mpv, group, "uosc")
     assert first.read_bytes() == b"new main"
     assert second.read_bytes() == b"new two"
+    assert asset.status(home)["uosc"]["installed"]
+    # The manifest is only healthy while EVERY member remains intact.
+    second.unlink()
+    assert not asset.status(home)["uosc"]["installed"]
+    original_download = asset.download
+    asset.download = lambda *args, **kwargs: zip_bytes({
+        "scripts/uosc/main.lua": b"restored main",
+        "scripts/uosc/two.lua": b"restored two",
+    })
+    asset.install_zip_group(home, "uosc")
+    asset.download = original_download
+    assert second.read_bytes() == b"restored two"
+    assert asset.status(home)["uosc"]["installed"]
+
+    anime = {
+        "shaders/Anime4K_Clamp_Highlights.glsl": b"shader clamp" * 20,
+        "shaders/Anime4K_Upscale.glsl": b"shader upscale" * 20,
+    }
+    asset.promote_zip_group(mpv, anime, "anime4k")
+    assert asset.status(home)["anime4k"]["installed"]
+    (mpv / "shaders/Anime4K_Upscale.glsl").unlink()
+    assert not asset.status(home)["anime4k"]["installed"]
 
     cli = subprocess.run(
         [sys.executable, str(script), "--status", "--json"],

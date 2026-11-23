@@ -122,6 +122,9 @@ dot assets --asset wallpapers --force      # refresh the wallpaper collection
 storage, validate ZIP members and expected content, then promote complete
 assets. Existing AppImages survive failed downloads. Directory replacements
 retain their previous version beside the new one as a `.previous-...` backup.
+The uosc and Anime4K multi-file installs carry versioned file-checksum manifests:
+missing, modified or partly deleted members are reported as not installed and
+can be repaired through a targeted retry. Existing files survive a failed update.
 The T3 Code nightly resolver refuses missing/invalid GitHub release metadata
 and only installs a plausible ELF AppImage. Anime4K is pinned to v4.0.1;
 other downloads deliberately track the upstream latest URLs, and the resolved
