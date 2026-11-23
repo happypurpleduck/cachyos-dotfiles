@@ -39,5 +39,10 @@ return {
 			"sleep 3 && exec ~/.local/opt/t3code/T3-Code.AppImage --password-store=gnome-libsecret",
 			{ workspace = "1 silent" }
 		)
+		-- Microsoft Teams PWA (same command as microsoft-teams.desktop) on the left monitor
+		hl.exec_cmd(
+			"sleep 3 && exec google-chrome-stable --app=https://teams.microsoft.com",
+			{ workspace = "10 silent" }
+		)
 	end,
 }

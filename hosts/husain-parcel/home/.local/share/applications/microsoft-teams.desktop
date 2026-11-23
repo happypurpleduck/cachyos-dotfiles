@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Microsoft Teams
+GenericName=Team Chat and Meetings
+Comment=Microsoft Teams as a Chrome app window (no official Linux client)
+Exec=google-chrome-stable --app=https://teams.microsoft.com
+Icon=teams
+Terminal=false
+Categories=Network;InstantMessaging;Chat;
+StartupWMClass=chrome-teams.microsoft.com__-Default
