@@ -6,9 +6,11 @@ import json
 import os
 from pathlib import Path
 import re
+import runpy
 import subprocess
 import sys
 import tempfile
+from unittest.mock import patch
 
 
 with tempfile.TemporaryDirectory() as tmp:
@@ -189,6 +191,29 @@ with tempfile.TemporaryDirectory() as tmp:
     assert extra.read_text() == "must survive"
     invoke(home_a, "A", "--rollback", unlink_id)
     assert (home_a / ".zshrc").is_symlink()
+
+    # Failure *after* valid symlinks were created but during seed promotion
+    # must restore all managed changes, not leave a partially linked home.
+    failed_home = root / "failed-seed-home"
+    failed_home.mkdir()
+    module = runpy.run_path(str(repo / "scripts/dot-links.py"))
+    replace = os.replace
+    target_seed = failed_home / ".config/waypaper/config.ini"
+
+    def fail_seed_write(source, destination):
+        if Path(destination) == target_seed:
+            raise OSError("injected seed promotion failure")
+        return replace(source, destination)
+
+    with patch.object(os, "replace", side_effect=fail_seed_write):
+        assert module["apply"](repo, failed_home, "A") == 1
+    assert not target_seed.exists()
+    assert not (failed_home / ".config/hypr/hyprland.lua").exists()
+    assert not (failed_home / ".local/state/cachyos-dotfiles/links-A.json").exists()
+    assert "rolled_back" in [
+        json.loads(p.read_text())["status"]
+        for p in (failed_home / ".local/state/dotfiles-backup/transactions").glob("*/journal.json")
+    ]
 
     # Retired host-only targets are visible in status before relinking.
     host_only = repo / "hosts/A/home/.config/hypr/A-only"

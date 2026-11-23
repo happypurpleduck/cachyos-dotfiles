@@ -21,11 +21,15 @@ else:
 PY
 cat > "$checkout/scripts/dot-links.py" <<'PY'
 from pathlib import Path
+import os
 import sys
 home = Path.home()
 file = home / ".config/test-linked"
 if "--dry-run" in sys.argv:
     print("Dry run: no files changed")
+elif os.environ.get("SIMULATE_LINK_FAIL") == "1":
+    print("injected linker failure", file=sys.stderr)
+    raise SystemExit(2)
 elif "--rollback" in sys.argv:
     file.unlink(missing_ok=True)
     (home / "rollback-invoked").write_text("yes")
@@ -76,6 +80,14 @@ export UNIT_STATE="$tmp/enabled-units"
 : > "$UNIT_STATE"
 unset DOTFILES
 printf 'A\n' | "$dot" confirm-host >/dev/null 2>&1
+
+# A linker failure must remain fatal despite Bash conditional errexit rules.
+if SIMULATE_LINK_FAIL=1 "$dot" install >"$tmp/output" 2>"$tmp/error"; then
+    echo "installer reported success after injected linker failure" >&2; exit 1
+fi
+grep -q 'managed link transaction failed' "$tmp/error"
+[ ! -e "$home/.config/test-linked" ]
+! grep -q 'install complete' "$tmp/output"
 
 # Theme generation failure follows a successful link transaction and must
 # invoke its exact rollback, preserving a usable home directory.
