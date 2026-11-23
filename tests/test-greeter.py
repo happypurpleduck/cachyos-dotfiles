@@ -77,6 +77,8 @@ with tempfile.TemporaryDirectory() as tmp:
     staged = run("--stage")
     stage = fake / "etc/greetd/mocha-greeter-staged"
     assert stage.is_dir()
+    # greetd runs qs as the greeter user; a 0700 root makes shell.qml unfindable.
+    assert stage.stat().st_mode & 0o777 == 0o755, oct(stage.stat().st_mode)
     assert (stage / "shell.qml").is_file()
     assert (stage / "wallpaper").read_bytes() == fallback.read_bytes()
     assert json.loads((stage / "theme.json").read_text())["accentHex"] == "#89b4fa"
@@ -91,6 +93,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert "enable greetd.service" in calls.read_text()
     live = fake / "etc/greetd/mocha-greeter"
     assert live.is_dir() and live.joinpath("shell.qml").is_file()
+    assert live.stat().st_mode & 0o777 == 0o755, oct(live.stat().st_mode)
     assert "qs -p /etc/greetd/mocha-greeter" in cfg.read_text()
     backups = list((fake / "var/backups/cachyos-dotfiles/greeter").glob("*/journal.json"))
     assert len(backups) == 1, backups

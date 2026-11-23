@@ -50,6 +50,11 @@ def hash_tree(root: Path) -> str | None:
     return digest.hexdigest()
 
 
+def world_readable_root(root: Path) -> bool:
+    # mkdtemp() creates 0700 dirs; greetd runs qs as the unprivileged greeter.
+    return root.is_dir() and (root.stat().st_mode & 0o777) == 0o755
+
+
 def run_systemctl(cmd: str, *args: str, check=True) -> subprocess.CompletedProcess:
     return subprocess.run([cmd, *args], stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE, text=True, check=check, timeout=30)
@@ -143,6 +148,7 @@ def stage(root: Path, source: Path, home: Path, user: str) -> Path:
             "user": user, "face": face, "session": ["start-hyprland"],
         }, indent=2))
         # Greeter must not need permission to read the owner's home.
+        temp.chmod(0o755)
         for file in temp.rglob("*"):
             if file.is_dir():
                 file.chmod(0o755)
@@ -150,7 +156,8 @@ def stage(root: Path, source: Path, home: Path, user: str) -> Path:
                 file.chmod(0o644)
         if not (temp / "greeter.json").is_file() or hash_tree(temp) is None:
             raise ValueError("invalid greeter stage")
-        if dest.is_dir() and hash_tree(dest) == hash_tree(temp):
+        if (world_readable_root(dest)
+                and hash_tree(dest) == hash_tree(temp)):
             print(f"greeter stage already current at {dest}")
             return dest
         if dest.exists():
@@ -231,6 +238,7 @@ def activate(root: Path, source: Path, home: Path, user: str, *,
         # Prepare complete assets while the existing live tree remains intact,
         # then switch by renaming directories on the same filesystem.
         shutil.copytree(staged, prepared)
+        prepared.chmod(0o755)
         if hash_tree(prepared) != hash_tree(staged):
             raise ValueError("staged greeter changed during preparation")
         if live.exists():
@@ -293,6 +301,7 @@ def install_default(root: Path, source: Path, home: Path, user: str, *,
     others = present_display_manager(root, ctl)
     if (not others and cfg.is_file()
             and cfg.read_text(encoding="utf-8") == build_config()
+            and world_readable_root(live)
             and hash_tree(live) == hash_tree(staged)
             and is_greetd_enabled(ctl)):
         print("greeter already configured for next boot; no display-manager changes")
