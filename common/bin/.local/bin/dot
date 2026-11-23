@@ -97,6 +97,12 @@ cmd_unlink() {
     --home "$HOME" --unlink "$@"
 }
 
+cmd_migrate_folded() {
+  need python3 python
+  python3 "$DOT/scripts/migrate-folded.py" --repo "$DOT" --host "$HOST" \
+    --home "$HOME" "$@"
+}
+
 cmd_rollback() {
   [ "$#" -eq 1 ] || die "usage: dot rollback <transaction-id>"
   need python3 python
@@ -435,6 +441,7 @@ dot — $DOT on $HOST
   dot link --backup-conflicts  back up colliding home files before linking
   dot unlink           unlink managed files without deleting app data
   dot rollback TXID    restore links/files from an applied transaction
+  dot migrate-folded [--apply]  preview or explicitly migrate legacy Stow dir links
   dot status           git status + links that are missing or were replaced by an app
   dot plan [--json]    read-only effective common/host target precedence
   dot doctor [--json|--strict]   preflight links, packages, display-manager status
@@ -458,6 +465,7 @@ case ${1:-help} in
   link) shift; cmd_link "$@" ;;
   unlink) shift; cmd_unlink "$@" ;;
   rollback) shift; cmd_rollback "$@" ;;
+  migrate-folded) shift; cmd_migrate_folded "$@" ;;
   status | st) cmd_status ;;
   plan) shift; cmd_plan "$@" ;;
   doctor) shift; cmd_doctor "$@" ;;
