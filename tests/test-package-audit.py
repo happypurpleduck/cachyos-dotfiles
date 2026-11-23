@@ -91,6 +91,9 @@ else:
         "git", "eza", "bat", "fd", "krita", "hokum-bin", "mock-aura"
     }
     assert "repo missing: none" in audit().stdout
+    # Reset the log after the successful authorized scenario before testing
+    # that a subsequent unapproved installation never invokes Shelly.
+    shelly_commands.unlink(missing_ok=True)
 
     installed.write_text("git\n")
     (binpath / "shelly").unlink()
