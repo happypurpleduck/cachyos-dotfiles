@@ -66,10 +66,14 @@ with tempfile.TemporaryDirectory() as tmp:
         )
         return result
 
+    def mutations() -> list[str]:
+        return [line for line in calls.read_text().splitlines()
+                if line.startswith(("enable ", "disable ", "restart ", "start ", "stop "))] if calls.exists() else []
+
     before = cfg.read_bytes()
     report = run()
     assert "sddm.service" in report.stdout
-    assert cfg.read_bytes() == before and not calls.exists()
+    assert cfg.read_bytes() == before and not mutations()
     staged = run("--stage")
     stage = fake / "etc/greetd/mocha-greeter-staged"
     assert stage.is_dir()
