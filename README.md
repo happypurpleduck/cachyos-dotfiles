@@ -310,7 +310,8 @@ dot status          # tracked changes and app-replaced managed links
 dot diff            # review tracked changes for common/ + this host
 dot save "message"  # commit tracked shared/current-host files, rebase and push
 dot pull            # fetch/rebase without stashing or creating new links
-dot add <file>      # add a file to the repo; --host for this machine only
+dot add <file>      # preview a safe, non-destructive config import
+dot add --apply --host <file>  # copy into this host (review/link/commit separately)
 dot packages        # snapshot this machine's extra packages
 dot optional        # optional apps: --list, or `dot optional qbittorrent` to install one
 ```
@@ -325,9 +326,27 @@ use `dot save --allow-staged "message"`; do not use this for secrets or runtime
 state.
 
 If an application replaces a symlink with a regular file, `dot save` refuses
-to guess which repository copy should receive it. Inspect and back up that
-file, copy it to the intended source under `common/` or
-`hosts/<this-host>/home/`, then run `dot link` when ready. Rebase conflicts
+to guess which repository copy should receive it. Importing that app-authored
+file is explicit and preview-first:
+
+```sh
+dot add ~/.config/example/settings.conf                 # preview shared source
+dot add --host ~/.config/example/settings.conf          # preview host override
+dot add --host --apply ~/.config/example/settings.conf  # COPY; do not move/delete HOME
+dot add --apply --replace-source ~/.config/example/settings.conf
+# Next: dot doctor, dot link --backup-conflicts, git add <reviewed path>, dot save
+```
+
+The importer refuses existing managed-source replacement without
+`--replace-source`, prevents common-owner collisions, detects symlinked
+parents, rejects binary/oversized configs and known secret/keyring paths,
+and preserves the original user file. When replacing a repository source
+it saves the previous version under
+`~/.local/state/dotfiles-backup/imports/<TXID>/`. It does **not**
+stage/commit any new files automatically. Inspect contents before running
+Git add; path heuristics cannot guarantee a config has no credentials.
+A common-source replacement can affect other linked machines after their
+approved sync, so choose `--host` for machine-specific values. Rebase conflicts
 stop the sync without force pushing; follow Git's `rebase --continue` or
 `rebase --abort` guidance. **Incoming shared/current-host changes are now
 reviewed before any Git rebase can touch linked source files.**
