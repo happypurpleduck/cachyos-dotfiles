@@ -104,6 +104,12 @@ Singleton {
     readonly property string scripts: Quickshell.shellPath("scripts")
     readonly property string wallpaperDir: home + "/Pictures/Wallpapers/catppuccin-mocha"
     readonly property string thumbDir: home + "/.cache/mocha-shell/thumbs"
+    // Bumped when `mocha-theme thumbs` writes new thumbnails (see Launcher), so
+    // images that failed before the file existed load again instead of staying blank.
+    property int thumbsRev: 0
+    function thumbUrl(name) {
+        return name ? `file://${thumbDir}/${name}.jpg?v=${thumbsRev}` : "";
+    }
 
     function alpha(c, a) {
         return Qt.rgba(c.r, c.g, c.b, a);

@@ -18,7 +18,7 @@ Card {
             color: Theme.surface0
             Image {
                 anchors.fill: parent
-                source: Theme.wallpaper ? `file://${Theme.thumbDir}/${Theme.wallpaper.split("/").pop()}.jpg` : ""
+                source: Theme.wallpaper ? Theme.thumbUrl(Theme.wallpaper.split("/").pop()) : ""
                 fillMode: Image.PreserveAspectCrop
                 asynchronous: true
             }

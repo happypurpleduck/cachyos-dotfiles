@@ -40,6 +40,10 @@ OverlayWindow {
             input.forceActiveFocus();
             input.cursorPosition = input.text.length;
             Clip.refresh();
+            if (!thumbGen.running) {
+                thumbGen.running = true;
+                wallpapers = [];   // re-list so newly added wallpapers show up
+            }
         }
     }
 
@@ -209,6 +213,20 @@ OverlayWindow {
         command: ["sh", "-c", `cd "${Theme.wallpaperDir}" && ls -1 | grep -iE '\\.(jpe?g|png|webp|gif)$'`]
         stdout: StdioCollector {
             onStreamFinished: win.wallpapers = text.trim().split("\n").filter(s => s)
+        }
+    }
+    // Wallpaper thumbnails: build missing/stale ones at shell start and on every
+    // open (incremental, near-instant when up to date), so new wallpapers and
+    // fresh hosts get thumbnails without a manual `mocha-theme thumbs`.
+    Process {
+        id: thumbGen
+        command: [Theme.scripts + "/mocha-theme", "thumbs"]
+        running: true
+        stdout: StdioCollector {
+            onStreamFinished: {
+                if (!/^0 thumbnails/.test(text.trim()))
+                    Theme.thumbsRev++;
+            }
         }
     }
     FileView {
@@ -479,7 +497,7 @@ OverlayWindow {
                         Image {
                             anchors.fill: parent
                             anchors.margins: tile.current || tile.applied ? 2 : 0
-                            source: tile.modelData.kind === "wallpaper" ? `file://${Theme.thumbDir}/${tile.modelData.data}.jpg` : ""
+                            source: tile.modelData.kind === "wallpaper" ? Theme.thumbUrl(tile.modelData.data) : ""
                             fillMode: Image.PreserveAspectCrop
                             asynchronous: true
                             cache: true
