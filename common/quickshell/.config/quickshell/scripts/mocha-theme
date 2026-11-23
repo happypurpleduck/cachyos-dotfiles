@@ -238,7 +238,7 @@ color14 {P('teal')}
 color7  {P('subtext1')}
 color15 {P('subtext0')}
 '''
-    if write(CFG / "kitty/mocha-theme.conf", conf) and have("pkill"):
+    if write(CFG / "kitty/mocha-theme.conf", conf) and have("pkill") and os.environ.get("MOCHA_OFFLINE") != "1":
         run("pkill", "-USR1", "-x", "kitty")
 
 
@@ -526,6 +526,9 @@ refine=text_width
 
 
 def render_chrome(acc):
+    # System-wide policy is never mutated by unattended wallpaper/theme changes.
+    if os.environ.get("MOCHA_ALLOW_BROWSER_POLICY") != "1":
+        return
     """Chrome theme colour via managed policy. cachyos-dotfiles/system/setup creates the policy
     file owned by the user, so it can be rewritten without sudo."""
     for d in ("/etc/opt/chrome/policies/managed", "/etc/chromium/policies/managed"):
@@ -756,7 +759,7 @@ def make_thumbs():
     out = HOME / ".cache/mocha-shell/thumbs"
     out.mkdir(parents=True, exist_ok=True)
     made = 0
-    for p in sorted(WALL_DIR.iterdir()):
+    for p in sorted(WALL_DIR.iterdir()) if WALL_DIR.is_dir() else []:
         if p.suffix.lower() not in IMAGE_EXT:
             continue
         t = out / (p.name + ".jpg")
@@ -817,7 +820,15 @@ def main(argv):
         apply_all(st)
         print(st["accent"])
     elif cmd == "restore":
-        set_wallpaper(st["wallpaper"], transition=False)
+        if not Path(st["wallpaper"]).is_file():
+            fallback = STATE_DIR / "fallback.png"
+            if fallback.is_file():
+                st["wallpaper"] = str(fallback)
+            else:
+                print("mocha-theme: wallpaper unavailable; keeping compositor background",
+                      file=sys.stderr)
+        if Path(st["wallpaper"]).is_file():
+            set_wallpaper(st["wallpaper"], transition=False)
         if "accentHex" not in st:
             st["accent"] = detect_accent(st["wallpaper"]) if st["mode"] == "auto" else st["accent"]
         save_state(st)
