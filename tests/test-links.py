@@ -113,9 +113,34 @@ with tempfile.TemporaryDirectory() as tmp:
     run_dot("link")
     seed = home_a / ".config/waypaper/config.ini"
     assert seed.read_text() == "seed once"
+    # A new seed belongs to the link journal, with guarded rollback.
+    first_seed_tx = re.search(r"dot rollback (\S+)", (run_dot("link")).stdout)
+    assert first_seed_tx is None, "unchanged seed created a new transaction"
     seed.write_text("app edited")
     run_dot("link")
     assert seed.read_text() == "app edited"
+
+    # A missing seed beneath a symlinked parent must not write outside HOME.
+    external = root / "external"
+    external.mkdir()
+    waypaper_b = home_b / ".config/waypaper"
+    waypaper_b.symlink_to(external, target_is_directory=True)
+    blocked = invoke(home_b, "B", ok=False)
+    assert "seed/.config/waypaper/config.ini" in blocked.stderr
+    assert not (external / "config.ini").exists()
+    waypaper_b.unlink()
+    # Check rollback after seed copy (not merely after symlink creation).
+    seeded = invoke(home_b, "B")
+    seed_tx = re.search(r"dot rollback (\S+)", seeded.stdout).group(1)
+    seed_b = waypaper_b / "config.ini"
+    assert seed_b.read_text() == "seed once"
+    invoke(home_b, "B", "--rollback", seed_tx)
+    assert not seed_b.exists()
+    seeded = invoke(home_b, "B")
+    seed_tx = re.search(r"dot rollback (\S+)", seeded.stdout).group(1)
+    seed_b.write_text("app-customized")
+    assert "refusing rollback" in invoke(home_b, "B", "--rollback", seed_tx, ok=False).stderr
+    assert seed_b.read_text() == "app-customized"
 
     extra = home_a / ".config/editor/unrelated-user-data"
     extra.write_text("must survive")
@@ -164,6 +189,15 @@ with tempfile.TemporaryDirectory() as tmp:
     assert extra.read_text() == "must survive"
     invoke(home_a, "A", "--rollback", unlink_id)
     assert (home_a / ".zshrc").is_symlink()
+
+    # Retired host-only targets are visible in status before relinking.
+    host_only = repo / "hosts/A/home/.config/hypr/A-only"
+    stale = home_a / ".config/hypr/A-only"
+    assert stale.is_symlink()
+    host_only.unlink()
+    assert "retired-link" in run_dot("status").stdout
+    invoke(home_a, "A", "--backup-conflicts")
+    assert not stale.exists()
 
     # Legacy folded Stow directory symlinks are rejected instead of silently
     # unlinking or reshaping an application's source directory.

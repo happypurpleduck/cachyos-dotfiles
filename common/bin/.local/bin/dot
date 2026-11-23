@@ -116,21 +116,10 @@ cmd_link() {
     return
   fi
   check_host_identity
+  # The Python linker includes first-use seeds in the same verified transaction.
+  # Keep its exit status even when cmd_link runs inside an if/command substitution.
   python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" \
     --home "$HOME" "$@"
-  seed
-}
-
-# seed/: configs apps rewrite all the time (btop, waypaper, zed). Copied once, never linked.
-seed() {
-  [ -d "$DOT/seed" ] || return 0
-  (cd "$DOT/seed" && find . -type f) | sed 's|^\./||' | while read -r f; do
-    if [ ! -e "$HOME/$f" ] && [ ! -L "$HOME/$f" ]; then
-      mkdir -p "$HOME/$(dirname "$f")"
-      cp "$DOT/seed/$f" "$HOME/$f"
-      echo "   seeded ~/$f"
-    fi
-  done
 }
 
 cmd_unlink() {
@@ -183,6 +172,8 @@ cmd_status() {
     fi
     bad=1
   done < <(each_file)
+  if ! python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" \
+      --home "$HOME" --check-retired; then bad=1; fi
   [ $bad -eq 1 ] || echo "   all links ok"
 }
 
@@ -641,7 +632,7 @@ cmd_new_host() {
   say "created hosts/$name — edit its host.lua (monitors: hyprctl monitors) and host.json, then: dot link"
 }
 
-# dot add [--host] <path>… — move files into the repo and link them back.
+# dot add [--host] <path>… — preview and copy files; never move HOME files.
 #   common package = first directory under ~/.config (or the file name for dotfiles in ~)
 # Safe import: preview by default; a copy does not publish or relink.
 cmd_add() {
