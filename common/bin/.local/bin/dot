@@ -119,6 +119,7 @@ cmd_link() {
   python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" \
     --home "$HOME" "$@"
   seed
+}
 
 # seed/: configs apps rewrite all the time (btop, waypaper, zed). Copied once, never linked.
 seed() {
