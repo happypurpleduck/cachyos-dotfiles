@@ -30,28 +30,59 @@ fi
 grep -q 'run dot confirm-host' "$tmp/err"
 env -u DOTFILES HOME="$home" DOT_HOST=A "$dotcmd" pull >"$tmp/err" 2>&1 || true
 ! grep -q 'run dot confirm-host' "$tmp/err"
-# Unsafe names must be rejected before touching hosts/ or parent folders.
-for bad in '../other' 'nested/host' '..' '_template'; do
-  if env -u DOTFILES HOME="$home" DOT_HOST=A "$dotcmd" new-host "$bad" >"$tmp/err" 2>&1; then
-    echo "unsafe host name accepted: $bad" >&2; exit 1
-  fi
-  grep -Eq 'invalid hostname|reserved host' "$tmp/err"
+# Privileged system/service actions must require the same enrolled profile,
+# regardless of argument order; previews remain available to unconfirmed hosts.
+mkdir -p "$checkout/system" "$checkout/scripts" "$tmp/fake-bin"
+cat > "$checkout/system/setup" <<'SH'
+#!/bin/sh
+echo "system setup $*" >> "$ACTION_LOG"
+SH
+chmod +x "$checkout/system/setup"
+cat > "$checkout/scripts/host-services.py" <<'PY'
+import subprocess
+import sys
+if "--apply" in sys.argv:
+    subprocess.run(["sudo", "true"], check=True)
+else:
+    print("services preview")
+PY
+cat > "$tmp/fake-bin/sudo" <<'SH'
+#!/bin/sh
+echo "sudo $*" >> "$ACTION_LOG"
+exec "$@"
+SH
+chmod +x "$tmp/fake-bin/sudo"
+export ACTION_LOG="$tmp/actions"
+export PATH="$tmp/fake-bin:$PATH"
+for command in system-setup services; do
+    if [ "$command" = services ]; then
+        args=(--confirm 'ENABLE HOST SERVICES' --apply)
+    else
+        args=(--apply)
+    fi
+    if env -u DOTFILES HOME="$home" DOT_HOST=B "$dotcmd" "$command" "${args[@]}" >"$tmp/err" 2>&1; then
+        echo "unconfirmed $command mutated machine" >&2; exit 1
+    fi
+    grep -q 'run dot confirm-host' "$tmp/err"
+    [ ! -e "$ACTION_LOG" ]
 done
-[ ! -e "$checkout/other" ] && [ ! -e "$checkout/hosts/nested" ]
-
-# Explicit PAM/DDC setup must not bypass this host's enrollment.
-mkdir -p "$checkout/system" "$tmp/fakebin"
-printf '#!/bin/sh\necho system-setup >> "$ACTION_LOG"\n' > "$checkout/system/setup"
-printf '#!/bin/sh\necho sudo >> "$ACTION_LOG"\nexec "$@"\n' > "$tmp/fakebin/sudo"
-chmod +x "$checkout/system/setup" "$tmp/fakebin/sudo"
-export ACTION_LOG="$tmp/mutations"
-export PATH="$tmp/fakebin:$PATH"
-if env -u DOTFILES HOME="$home" DOT_HOST=B "$dotcmd" system-setup --apply >"$tmp/err" 2>&1; then
-  echo "unconfirmed profile invoked privileged setup" >&2; exit 1
+# Both valid ordering forms must also require enrollment.
+if env -u DOTFILES HOME="$home" DOT_HOST=B "$dotcmd" services --apply --confirm 'ENABLE HOST SERVICES' >"$tmp/err" 2>&1; then
+    echo "unconfirmed services first-argument form bypassed enrollment" >&2; exit 1
 fi
 [ ! -e "$ACTION_LOG" ]
 env -u DOTFILES HOME="$home" DOT_HOST=B "$dotcmd" system-setup --dry-run >/dev/null
 env -u DOTFILES HOME="$home" DOT_HOST=A "$dotcmd" system-setup --apply
-[ "$(grep -c '^sudo' "$ACTION_LOG")" -eq 1 ]
+env -u DOTFILES HOME="$home" DOT_HOST=A "$dotcmd" services --confirm 'ENABLE HOST SERVICES' --apply
+env -u DOTFILES HOME="$home" DOT_HOST=A "$dotcmd" services --apply --confirm 'ENABLE HOST SERVICES'
+[ "$(grep -c '^sudo ' "$ACTION_LOG")" -eq 3 ]
 
-echo 'host enrollment, name validation and privileged system setup: OK'
+for bad in '../other' 'foo/bar' '..'; do
+    if env -u DOTFILES HOME="$home" DOT_HOST=A "$dotcmd" new-host "$bad" >"$tmp/err" 2>&1; then
+        echo "unsafe hostname accepted: $bad" >&2; exit 1
+    fi
+    grep -Eq 'invalid hostname|reserved host' "$tmp/err"
+done
+[ ! -e "$checkout/other" ] && [ ! -e "$checkout/hosts/foo" ]
+
+echo 'host enrollment, privileged consent orderings and new-host validation: OK'

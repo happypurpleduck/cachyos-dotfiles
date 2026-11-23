@@ -433,6 +433,15 @@ cmd_greeter() {
 }
 
 # Explicit, user-owned vendor installation; never part of unattended dot install.
+cmd_services() {
+  need python3 python
+  local arg
+  for arg in "$@"; do
+    if [ "$arg" = "--apply" ]; then check_host_identity; break; fi
+  done
+  python3 "$DOT/scripts/host-services.py" --repo "$DOT" --host "$HOST" "$@"
+}
+
 cmd_apps() {
   need python3 python
   python3 "$DOT/scripts/upstream-apps.py" --home "$HOME" "$@"
@@ -499,6 +508,9 @@ cmd_install() {
   else
     say "system changes skipped; preview: dot system-setup (apply: dot system-setup --apply)"
   fi
+  say "host-selected system services (read-only; never enabled implicitly)"
+  python3 "$DOT/scripts/host-services.py" --repo "$DOT" --host "$HOST" ||
+    warn "host system services need attention; use dot services --apply explicitly"
   say "user services"
   systemctl --user daemon-reload || die "user systemd manager unavailable; log into a user session before installing services"
   if systemctl --user cat hokum.service >/dev/null 2>&1; then
@@ -551,7 +563,8 @@ cmd_optional_ask_only() {
 cmd_new_host() {
   [ "$#" -le 1 ] || die "usage: dot new-host [name]"
   local name=${1:-$HOST}
-  [[ "$name" =~ ^[[:alnum:]][[:alnum:]_.-]*$ ]] || die "invalid hostname: $name"
+  [[ "$name" =~ ^[[:alnum:]][[:alnum:]_.-]*$ ]] ||
+    die "invalid hostname: $name"
   case "$name" in .|..|_template) die "cannot create reserved host: $name" ;; esac
   [ -e "$DOT/hosts/$name" ] && die "hosts/$name already exists"
   cp -r "$DOT/hosts/_template" "$DOT/hosts/$name"
@@ -596,6 +609,8 @@ dot — $DOT on $HOST
   dot install --apply-system  explicitly include limited PAM/DDC system setup
   dot system-setup [--apply]  preview or apply limited PAM/DDC setup
   dot greeter [--stage|--activate|--rollback TXID]  safe login-manager control
+  dot services                read-only host system service (Bluetooth) status
+  dot services --apply --confirm 'ENABLE HOST SERVICES'  explicit activation
   dot apps status             first-party mise/Zed install type and update policy
   dot apps install mise zed   explicit vendor installer bootstraps (no pacman/AUR)
   dot apps update mise        use mise self-update; Zed updates on restart
@@ -631,6 +646,7 @@ case ${1:-help} in
   system-setup) shift; cmd_system_setup "$@" ;;
   assets) shift; cmd_assets "$@" ;;
   apps) shift; cmd_apps "$@" ;;
+  services) shift; cmd_services "$@" ;;
   greeter) shift; cmd_greeter "$@" ;;
   link) shift; cmd_link "$@" ;;
   unlink) shift; cmd_unlink "$@" ;;

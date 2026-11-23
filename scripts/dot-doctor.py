@@ -112,6 +112,11 @@ def report(repo: Path, home: Path, host: str) -> dict:
             command: bool(shutil.which(command))
             for command in ("git", "python3", "stow", "pacman", "systemctl")
         },
+        "host_services": (
+            __import__("runpy").run_path(str(repo / "scripts/host-services.py"))["inspect"](repo, host)
+            if (repo / "scripts/host-services.py").is_file()
+            else {"host": host, "selected": [], "services": {}, "blocking": []}
+        ),
         "system_changes": {
             "display_manager": display_manager,
             "plan": "not performed; system/setup and greeter need independent approval",
@@ -167,6 +172,10 @@ def main() -> int:
                 "other manager" if app["installed"] else "missing"
             )
             print(f"  {name}: {mode} (dot apps status)")
+        for name, item in data["host_services"]["services"].items():
+            print(f"  host service {name}: "
+                  f"{'ready' if item['ready'] else 'missing prerequisites'}, "
+                  f"enabled={item['enabled']}, active={item['active']}")
         print("  system: existing display manager "
               f"{data['system_changes']['display_manager']} (unchanged)")
         print("  dry run only: no links, packages, services, backups, or /etc modifications")
@@ -174,7 +183,8 @@ def main() -> int:
             print("  BLOCKED: resolve collisions and folded/foreign parent links before apply")
 
     if args.strict and (data["blocking_targets"] or data["packages"]["missing"]
-                        or data["packages"]["blocking"]):
+                        or data["packages"]["blocking"]
+                        or data["host_services"]["blocking"]):
         return 1
     return 0
 
