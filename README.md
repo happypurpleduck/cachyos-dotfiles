@@ -78,11 +78,24 @@ transaction only covers managed links. Successful link application does not
 automatically reload Hyprland or restart Quickshell.
 
 
-**Important:** this is a preflight-only increment. The existing `dot link`
-and non-preview `dot install` retain their old behavior until the
-transactional/linker follow-ups under #2 and #6 have been reviewed.
-Do not treat a successful preview as authorization to replace a
-working display manager or migrate folded links.
+### System integration is always explicit
+
+```sh
+dot system-setup                 # read-only preview of PAM/keyring and i2c-dev
+dot system-setup --apply         # explicitly apply the limited changes with sudo
+dot install                      # does NOT modify /etc or the login manager
+dot install --apply-system       # explicitly include limited PAM/DDC setup
+```
+
+The system setup script makes a timestamped backup before changing greetd PAM
+hooks and refuses to edit an unfamiliar PAM layout. Recovery instructions
+are printed when a backup is written. The optional i2c-dev module-load rule
+is additive. Browser managed-policy ownership and the display manager/greeter
+are **never** changed by these commands. Do not run the older
+`install-greeter` helper against a working login manager until its separate
+staging, display-manager conflict detection, and rollback safeguards are
+implemented and verified. System-wide rollback, service gating, and first-login
+checks remain open work under #6/#7.
 
 ## New machine
 
@@ -113,11 +126,12 @@ because its settings look similar. `hosts/_template` is never selectable.
    then installs `packages/common.txt`, the host's `packages.txt` and the chosen optional groups
    (AUR lists via paru, kept minimal)
 3. downloads assets: wallpapers, cursors, mpv scripts/shaders, T3 Code, Zed, mise tools
-4. links the configs with GNU Stow (anything in the way is moved to `~/.local/state/dotfiles-backup/`)
-5. sets up system files: keyring unlock at login, DDC/CI, Chrome theme policy, the Mocha greeter
-6. enables user services, runs the host's `setup` if it has one
+4. links the effective per-host files transactionally (blocking existing collisions unless explicitly approved)
+5. **skips system-level changes by default**; pass `--apply-system` to opt into limited PAM/DDC setup
+6. configures user services and runs the host's `setup` if it has one
 
-Then log out and back in from the greeter.
+Keep the existing display manager. Check `dot doctor`, required services,
+theme generation, and shell startup before logging out or changing sessions.
 
 ## Day to day
 
@@ -153,7 +167,7 @@ being built separately in #6.
 ## Layout
 
 ```
-common/<app>/       stow packages linked on every machine (paths mirror $HOME)
+common/<app>/       GNU Stow-shaped package sources; effective files linked individually
 hosts/<hostname>/   this machine only:
   home/             linked on top of common (file by file)
   packages.txt      extra repo packages        aur.txt  extra AUR packages
@@ -163,8 +177,8 @@ hosts/<hostname>/   this machine only:
 hosts/_template/    starting point for a new machine (`dot new-host`)
 packages/           common.txt (repo) and aur.txt (AUR) for every machine;
   optional/<group>.txt   opt-in apps ("# description" line, then packages; aur:<name> for AUR)
-seed/               configs apps keep rewriting (btop, waypaper, zed): copied once, not linked
-system/setup        files outside $HOME (run with sudo; idempotent)
+seed/               app-writable default configs (btop, waypaper, zed); not linked
+system/setup        read-only by default; --apply changes limited PAM/DDC settings
 scripts/            fetch-assets (downloads that don't belong in git)
 install             bootstrap for a fresh machine
 ```

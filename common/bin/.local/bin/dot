@@ -112,7 +112,7 @@ cmd_rollback() {
     --home "$HOME" --rollback "$1"
 }
 
-# Verify effective managed links without relying on Stow.
+# Verify effective managed symlinks without Stow.
 linked() {
   [ -L "$2" ] || return 1
   local actual expected
@@ -364,13 +364,32 @@ cmd_install_packages() {
   fi
 }
 
+# Safe system integration: preview without sudo, apply only by explicit flag.
+cmd_system_setup() {
+  if [ "${1:-}" = "--apply" ]; then
+    sudo "$DOT/system/setup" --apply
+  else
+    "$DOT/system/setup" "$@"
+  fi
+}
 cmd_install() {
   if [ "${1:-}" = "--dry-run" ]; then
     cmd_doctor --strict
     python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" --home "$HOME" --dry-run
     return
   fi
-  [ -d "$HOSTDIR" ] || { warn "no hosts/$HOST yet"; read -r -p ":: create it from the template now? [Y/n] " a; [[ ${a,,} == n* ]] || cmd_new_host "$HOST"; }
+  local apply_system=0 a
+  if [ "${1:-}" = "--apply-system" ]; then
+    apply_system=1
+  elif [ "$#" -ne 0 ]; then
+    die "usage: dot install [--dry-run|--apply-system]"
+  fi
+  if [ ! -d "$HOSTDIR" ]; then
+    warn "no hosts/$HOST yet"
+    read -r -p ":: create it from the template now? [Y/n] " a
+    [[ ${a,,} == n* ]] && die "create hosts/$HOST before installing"
+    cmd_new_host "$HOST"
+  fi
   if [ -n "$(opt_groups)" ]; then
     say "optional apps (answers are saved in hosts/$HOST/optional.txt)"
     cmd_optional_ask_only
@@ -382,8 +401,12 @@ cmd_install() {
   say "downloading assets (wallpapers, cursors, mpv scripts, apps)"
   "$DOT/scripts/fetch-assets"
   cmd_link
-  say "system files (sudo): keyring unlock at login, DDC/CI, Chrome theme policy, greeter"
-  sudo "$DOT/system/setup"
+  if [ "$apply_system" -eq 1 ]; then
+    say "applying explicitly requested limited system setup (sudo)"
+    sudo "$DOT/system/setup" --apply
+  else
+    say "system changes skipped; preview: dot system-setup (apply: dot system-setup --apply)"
+  fi
   say "user services"
   systemctl --user daemon-reload
   systemctl --user enable gnome-keyring-daemon.socket hokum.service 2>/dev/null || true
@@ -398,7 +421,7 @@ cmd_install() {
     ~/.config/quickshell/scripts/mocha-theme apply || true
     ~/.config/quickshell/scripts/mocha-theme thumbs >/dev/null || true
   fi
-  say "done. Log out and back in (the greeter unlocks the keyring and starts Hyprland)."
+  say "done. Review services and login manager before logging out; greeter is unchanged."
 }
 
 # record answers for unasked groups without installing (install happens right after)
@@ -451,7 +474,9 @@ cmd_help() {
   cat <<EOF
 dot — $DOT on $HOST
 
-  dot install          first-time setup: packages, assets, links, system files, services
+  dot install          packages, assets, links, user services (no system changes)
+  dot install --apply-system  explicitly include limited PAM/DDC system setup
+  dot system-setup [--apply]  preview or apply limited PAM/DDC setup
   dot link             safely link this host's effective per-file configuration
   dot link --backup-conflicts  back up colliding home files before linking
   dot unlink           unlink managed files without deleting app data
@@ -477,6 +502,7 @@ EOF
 
 case ${1:-help} in
   install) shift; cmd_install "$@" ;;
+  system-setup) shift; cmd_system_setup "$@" ;;
   link) shift; cmd_link "$@" ;;
   unlink) shift; cmd_unlink "$@" ;;
   rollback) shift; cmd_rollback "$@" ;;
