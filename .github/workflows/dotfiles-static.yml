@@ -61,3 +61,7 @@ jobs:
         run: |
           python3 -m py_compile scripts/upstream-apps.py tests/test-upstream-apps.py
           python3 tests/test-upstream-apps.py
+      - name: Remote preflight and consented shared config update
+        run: |
+          python3 -m py_compile scripts/pull-preflight.py tests/test-pull-preflight.py
+          python3 tests/test-pull-preflight.py

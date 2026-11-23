@@ -273,29 +273,48 @@ cmd_save() {
     git -C "$DOT" commit -m "$msg" && say "committed: $msg"
   fi
 
-  # Rebase only after a local commit; no autostash or force push.
-  if ! git -C "$DOT" pull --rebase; then
-    warn "sync stopped. Resolve conflicts with 'git -C "$DOT" rebase --continue',"
-    warn "or preserve your work and abort with 'git -C "$DOT" rebase --abort'. Nothing was force-pushed."
+  # Fetch and stage a read-only preflight before any Git command can mutate
+  # linked sources. Remote active/shared changes require explicit dot pull --apply.
+  local remote_sha
+  remote_sha=$(python3 "$DOT/scripts/pull-preflight.py" --repo "$DOT" \
+    --host "$HOST" --home "$HOME" --emit-sha) || {
+    warn "saved a local commit but did not rebase or push; review: dot pull"
+    warn "after verification, run dot pull --apply and then dot save"
+    return 1
+  }
+  if ! git -C "$DOT" rebase "$remote_sha"; then
+    warn "rebase conflicted. Resolve via git rebase --continue or --abort; no force push"
     return 1
   fi
-  git -C "$DOT" push
-  say "pushed; new files are not automatically linked (run dot link after checking host prerequisites)"
+  if ! git -C "$DOT" push; then
+    warn "push rejected/failed. Local commit preserved; inspect remote and repeat dot pull"
+    return 1
+  fi
+  say "pushed; new targets require deliberate dot link after reviewing dot doctor"
 }
 
 cmd_pull() {
   check_host_identity
+  local consent=() remote_sha
+  case "${1:-}" in
+    "") [ "$#" -eq 0 ] || die "usage: dot pull [--apply]" ;;
+    --apply) [ "$#" -eq 1 ] || die "usage: dot pull [--apply]"; consent=(--apply) ;;
+    *) die "usage: dot pull [--apply]" ;;
+  esac
   if ! git -C "$DOT" diff --quiet || ! git -C "$DOT" diff --cached --quiet; then
-    die "working tree contains tracked edits; review or save them before dot pull (no automatic stash)"
+    die "working tree has tracked changes; save/resolve them before remote sync"
   fi
-  if ! git -C "$DOT" pull --rebase; then
-    warn "pull stopped: resolve with 'git -C "$DOT" rebase --continue' or --abort"
+  remote_sha=$(python3 "$DOT/scripts/pull-preflight.py" --repo "$DOT" \
+    --host "$HOST" --home "$HOME" --emit-sha "${consent[@]}") || {
+      warn "remote preflight blocked sync. Nothing in tracked home config was updated."
+      return 1
+    }
+  if ! git -C "$DOT" rebase "$remote_sha"; then
+    warn "rebase stopped. Use git -C \"$DOT\" rebase --continue / --abort."
     return 1
   fi
-  # This does not apply new links or run setup; linked *existing* files still
-  # track the repo and may change when Git updates them. Full activation gates
-  # and rollback are tracked separately in #6.
-  say "repository updated; review changes and prerequisites before running dot link"
+  say "synced reviewed revision $remote_sha; run dot doctor and dot link as needed"
+  warn "existing live symlinks into Git may reflect changes immediately after rebase"
 }
 
 pkglist() { grep -v -E '^\s*(#|$)' "$1" 2>/dev/null | awk '{print $1}' || true; }
@@ -595,7 +614,8 @@ dot — $DOT on $HOST
   dot diff [--stat] [path…]  tracked shared/host changes; ignores untracked files
   dot save [message]   commit tracked shared/host edits, rebase and push
   dot save --allow-staged MSG  also publish explicitly staged other-host/maintenance files
-  dot pull             pull without autostash; new links require explicit dot link
+  dot pull             preview remote active changes; sync other-host-only edits
+  dot pull --apply     apply a reviewed preflight-passing remote revision
   dot add [--host] F…  move file(s) into the repo (common, or this host with --host) and link
   dot packages         snapshot this machine's extra packages into hosts/$HOST
   dot optional [grp…]  optional apps: ask about new groups, or install the named ones
@@ -621,7 +641,7 @@ case ${1:-help} in
   doctor) shift; cmd_doctor "$@" ;;
   diff | d) shift; cmd_diff "$@" ;;
   save) shift; cmd_save "$@" ;;
-  pull | sync) cmd_pull ;;
+  pull | sync) shift; cmd_pull "$@" ;;
   add) shift; cmd_add "$@" ;;
   packages | pkgs) cmd_packages ;;
   install-packages) cmd_install_packages ;;
