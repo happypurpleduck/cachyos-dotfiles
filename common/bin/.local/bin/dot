@@ -385,6 +385,21 @@ cmd_install_packages() {
   python3 "$DOT/scripts/package-audit.py" --repo "$DOT" --host "$HOST" --install
 }
 
+cmd_greeter() {
+  need python3 python
+  case "${1:-}" in
+    --stage | --activate | --rollback)
+      check_host_identity
+      sudo python3 "$DOT/scripts/greeter-control.py" --home "$HOME" \
+        --source "$HOME/.config/quickshell" --user "$(id -un)" "$@"
+      ;;
+    *)
+      python3 "$DOT/scripts/greeter-control.py" --home "$HOME" \
+        --source "$HOME/.config/quickshell" --user "$(id -un)" "$@"
+      ;;
+  esac
+}
+
 cmd_assets() {
   need python3 python
   python3 "$DOT/scripts/asset-manager.py" --home "$HOME" "$@"
@@ -542,6 +557,7 @@ dot — $DOT on $HOST
   dot install          packages, assets, links, user services (no system changes)
   dot install --apply-system  explicitly include limited PAM/DDC system setup
   dot system-setup [--apply]  preview or apply limited PAM/DDC setup
+  dot greeter [--stage|--activate|--rollback TXID]  safe login-manager control
   dot assets --status          inspect optional downloads without network
   dot assets --asset t3code    fetch one optional asset (use --force to refresh)
   dot link             safely link this host's effective per-file configuration
@@ -572,6 +588,7 @@ case ${1:-help} in
   install) shift; cmd_install "$@" ;;
   system-setup) shift; cmd_system_setup "$@" ;;
   assets) shift; cmd_assets "$@" ;;
+  greeter) shift; cmd_greeter "$@" ;;
   link) shift; cmd_link "$@" ;;
   unlink) shift; cmd_unlink "$@" ;;
   rollback) shift; cmd_rollback "$@" ;;

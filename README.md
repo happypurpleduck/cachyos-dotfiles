@@ -137,15 +137,39 @@ dot install                      # does NOT modify /etc or the login manager
 dot install --apply-system       # explicitly include limited PAM/DDC setup
 ```
 
-The system setup script makes a timestamped backup before changing greetd PAM
-hooks and refuses to edit an unfamiliar PAM layout. Recovery instructions
-are printed when a backup is written. The optional i2c-dev module-load rule
-is additive. Browser managed-policy ownership and the display manager/greeter
-are **never** changed by these commands. Do not run the older
-`install-greeter` helper against a working login manager until its separate
-staging, display-manager conflict detection, and rollback safeguards are
-implemented and verified. System-wide rollback, service gating, and first-login
-checks remain open work under #6/#7.
+The system setup script makes a timestamped root-owned backup before changing
+greetd PAM hooks and refuses to edit an unfamiliar PAM layout. Recovery
+instructions are printed when a backup is written. The optional i2c-dev
+module-load rule is additive. Browser managed-policy ownership and the
+display manager/greeter are **never** changed by ordinary `dot install`.
+
+### Explicit greeter staging and TTY recovery
+
+```sh
+dot greeter                                      # read-only preflight: deps and existing DMs
+dot greeter --stage                              # sudo: stage a complete independent greeter
+dot greeter --activate --confirm 'ACTIVATE greetd'
+# If replacing SDDM, GDM or LightDM, explicitly include:
+dot greeter --activate --replace-display-manager --confirm 'ACTIVATE greetd'
+# From a TTY if login is broken: Ctrl+Alt+F2, log in, then:
+dot greeter --rollback TXID
+```
+
+Staging verifies the Quickshell source, greetd/cage/qs/session dependencies,
+then writes only `/etc/greetd/mocha-greeter-staged/`. A missing wallpaper uses
+the locally generated fallback or a plain Mocha background. Stage **never**
+edits the active login configuration. Activation refuses an existing display
+manager without an explicit replacement flag. It atomically swaps prepared
+assets into place, backs up the old greetd configuration/assets under
+`/var/backups/cachyos-dotfiles/greeter/TXID`, switches service enablement
+for the next boot, and **never restarts the active display manager**.
+Rollback checks that no one has edited the new greeter since activation,
+then restores previous assets, config and service selection.
+
+The former direct `install-greeter` script is disabled because it deleted
+working greeter assets before validation. A fake-root automated test verifies
+these steps; the real login path still requires a separate CachyOS VM test
+before considering installation readiness accepted.
 
 ### CachyOS dependency and service gates
 
