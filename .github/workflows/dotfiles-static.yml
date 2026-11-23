@@ -53,3 +53,7 @@ jobs:
           python3 -m py_compile scripts/asset-manager.py tests/test-assets.py
           bash -n scripts/fetch-assets
           python3 tests/test-assets.py
+      - name: Greeter stage/activation/rollback in fake root
+        run: |
+          python3 -m py_compile scripts/greeter-control.py tests/test-greeter.py
+          python3 tests/test-greeter.py
