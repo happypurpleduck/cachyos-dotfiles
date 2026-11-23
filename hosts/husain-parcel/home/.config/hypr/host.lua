@@ -34,6 +34,10 @@ hl.workspace_rule({ workspace = "10", monitor = LEFT, default = true, persistent
 
 return {
 	autostart = function()
-		-- hl.exec_cmd("sleep 3 && discord --start-minimized")
+		-- T3 Code (nightly AppImage, self-updating) opens quietly on workspace 1
+		hl.exec_cmd(
+			"sleep 3 && exec ~/.local/opt/t3code/T3-Code.AppImage --password-store=gnome-libsecret",
+			{ workspace = "1 silent" }
+		)
 	end,
 }
