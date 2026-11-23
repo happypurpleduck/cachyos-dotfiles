@@ -16,6 +16,8 @@ with tempfile.TemporaryDirectory() as root_name:
     theme = repo / "common/quickshell/.config/quickshell/scripts/mocha-theme"
     env = {**os.environ, "HOME": str(home)}
     env.pop("HYPRLAND_INSTANCE_SIGNATURE", None)
+    env.pop("XDG_CONFIG_HOME", None)
+    env.pop("XDG_STATE_HOME", None)
 
     def invoke(*args, good=True):
         run = subprocess.run(
