@@ -72,10 +72,37 @@ after migration. Never manually remove folded directory symlinks.
 `dot unlink` without a new link-state manifest still refuses to guess
 ownership; it does not automatically reverse a legacy Stow installation.
 
-System-level changes, startup/service activation, greeter migration and a
-full interrupted-install recovery path remain work in #6; the per-file
-transaction only covers managed links. Successful link application does not
-automatically reload Hyprland or restart Quickshell.
+### Installation checkpoints and recovery
+
+Regular `dot install` performs preflight before package changes or linking.
+It checks user-systemd/Hokum unit availability before the link transaction.
+Once links are applied, essential offline theme generation and user-service
+activation must succeed. If a later mandatory phase fails, the installer
+attempts to **roll back this installation's managed links** using the exact
+transaction ID, rather than leaving the HOME symlinks half-applied. Repeat
+`dot link` is now a precise no-op when the effective targets already match.
+The installer reports changed links and whether a recovery transaction exists.
+
+Packages installed by pacman/AUR are **not automatically uninstalled**
+on failure; reversing those transactions or root-owned PAM backups requires
+separate user review. Optional assets may remain cached. A greeter is never
+implicitly staged, enabled or restarted.
+
+Arbitrary host scripts are also separate from routine installation:
+
+```sh
+dot host-setup             # preview selected host-specific executable path
+dot host-setup --apply     # explicitly authorize its execution
+```
+
+Inspect a host script before consenting. It may perform machine-specific
+actions that do not have a generic undo operation.
+
+Installed system packages, explicit host scripts and privileged system
+integration are still separate operations with their own recovery boundaries.
+The managed-home linker is transactionally restorable; there is no unsafe
+promise that all pacman or PAM operations can be rolled back automatically.
+Successful link application does not reload Hyprland or restart Quickshell.
 
 
 ### Optional assets, retries and failure recovery
@@ -298,7 +325,7 @@ references a different user's wallpaper file.
 3. attempts optional assets: wallpapers, cursors, mpv scripts/shaders and T3 Code (failures are reported but do not block linking; Zed/mise are package-managed)
 4. links the effective per-host files transactionally (blocking existing collisions unless explicitly approved)
 5. **skips system-level changes by default**; pass `--apply-system` to opt into limited PAM/DDC setup
-6. configures user services and runs the host's `setup` if it has one
+6. verifies required user services and reports any host setup script; running that script is separately consented
 
 Keep the existing display manager. Check `dot doctor`, required services,
 theme generation, and shell startup before logging out or changing sessions.
