@@ -16,6 +16,17 @@ git clone git@github.com:happypurpleduck/cachyos-dotfiles.git ~/cachyos-dotfiles
 ~/cachyos-dotfiles/install
 ```
 
+The checkout can also live in another directory. After installation, `dot`
+resolves its actual checkout through its `~/.local/bin/dot` symlink instead
+of assuming `~/cachyos-dotfiles`. For deliberate overrides, set
+`DOTFILES=/path/to/checkout`.
+
+The default host is the system hostname (`/etc/hostname`). To intentionally
+use a different profile, run commands with `DOT_HOST=profile-name`, for
+example `DOT_HOST=laptop dot status`. Keep **one distinct host directory per
+physical machine**; do not select another machine's hardware profile merely
+because its settings look similar. `hosts/_template` is never selectable.
+
 `install` asks for sudo a few times and:
 
 1. offers to create `hosts/<hostname>/` from `hosts/_template` if this machine is new
