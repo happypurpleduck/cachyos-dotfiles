@@ -105,13 +105,22 @@ with tempfile.TemporaryDirectory() as temporary:
             assert False, "unsupported CPU architecture was accepted"
         except ValueError:
             pass
-    for machine, wrong in (("x86_64", "arm64"), ("aarch64", "x86_64")):
-        try:
-            asset.nightly_asset([{"prerelease": True, "tag_name": tag,
-                                 "assets": [releases[0]["assets"][0 if wrong == "arm64" else 1]]}], machine)
-            assert False, "wrong architecture was accepted"
-        except ValueError:
-            pass
+    # Even if the release lists only the other architecture, do not download
+    # a guessed binary. Mock update YAML so this test never hits the network.
+    original_download = asset.download
+    try:
+        for machine, wrong in (("x86_64", "arm64"), ("aarch64", "x86_64")):
+            asset.download = lambda *args, **kwargs: (
+                f"path: T3-Code-Nightly-{wrong}.AppImage\n".encode()
+            )
+            try:
+                asset.nightly_asset([{"prerelease": True, "tag_name": tag,
+                                     "assets": [releases[0]["assets"][0 if wrong == "arm64" else 1]]}], machine)
+                assert False, "wrong architecture was accepted"
+            except ValueError:
+                pass
+    finally:
+        asset.download = original_download
 
     # Check ELF CPU target, not only the four-byte magic.
     def fake_elf(machine_id: int) -> bytes:
