@@ -374,21 +374,26 @@ cmd_optional() {
 
 cmd_packages() {
   check_host_identity
+  need pacman pacman
   [ -d "$HOSTDIR" ] || die "no hosts/$HOST (dot new-host)"
-  local common aur
-  common=$( (pkglist "$DOT/packages/common.txt"; opt_pkgs) | sort -u)
-  aur=$( (pkglist "$DOT/packages/aur.txt"; opt_pkgs aur) | sort -u)
-  {
-    echo "# $HOST — explicitly installed repo packages beyond packages/common.txt and optional groups."
-    echo "# Snapshot from \`dot packages\` ($(date +%F)); edit freely."
-    comm -23 <(pacman -Qqen | sort -u) <(echo "$common")
-  } >"$HOSTDIR/packages.txt"
-  {
-    echo "# $HOST — AUR packages beyond packages/aur.txt (snapshot $(date +%F))."
-    comm -23 <(pacman -Qqem | sort -u) <(echo "$aur")
-  } >"$HOSTDIR/aur.txt"
-  say "updated hosts/$HOST/packages.txt and aur.txt"
-  git -C "$DOT" --no-pager diff --stat -- "hosts/$HOST"
+  local desired_repo desired_foreign native_extra foreign_extra
+  # Inspection is NOT adoption. Existing-machine packages may be historical,
+  # vendor self-managed, locally built, or irrelevant to another machine.
+  desired_repo=$( (pkglist "$DOT/packages/common.txt";
+                   pkglist "$HOSTDIR/packages.txt"; opt_pkgs) | sort -u)
+  desired_foreign=$( (pkglist "$DOT/packages/aur.txt";
+                      pkglist "$HOSTDIR/aur.txt"; opt_pkgs aur) | sort -u)
+  native_extra=$(comm -23 <(pacman -Qqen | sort -u) <(printf '%s\n' "$desired_repo" | sort -u))
+  foreign_extra=$(comm -23 <(pacman -Qqem | sort -u) <(printf '%s\n' "$desired_foreign" | sort -u))
+  say "read-only installed-package inventory for $HOST (NOT adopted into host manifests)"
+  printf '\n:: installed repository packages outside explicit dotfiles requirements:\n%s\n' "$native_extra"
+  printf '\n:: installed foreign/local packages outside explicit dotfiles requirements:\n%s\n' "$foreign_extra"
+  warn "Review each item before intentionally editing hosts/$HOST/packages.txt or aur.txt."
+  warn "Foreign/local packages are NOT automatically approved AUR dependencies."
+  if printf '%s\n%s\n' "$native_extra" "$foreign_extra" | grep -Eq '^(mise|zed)$'; then
+    warn "mise/Zed already package-managed: migrate manually before using upstream self-update."
+  fi
+  say "no tracked source files were modified; dot save cannot publish this inventory"
 }
 
 cmd_install_packages() {
@@ -683,7 +688,7 @@ dot — $DOT on $HOST
   dot pull --apply     apply a reviewed preflight-passing remote revision
   dot add [--host] F…  preview safe app config copy (never moves HOME)
   dot add --apply [--host] F…  copy reviewed config; link and stage separately
-  dot packages         snapshot this machine's extra packages into hosts/$HOST
+  dot packages         inspect installed extras; manually choose managed host packages
   dot optional [grp…]  optional apps: ask about new groups, or install the named ones
                        (--list shows them, --ask asks about all of them again)
   dot new-host [name]  start hosts/<name> from hosts/_template

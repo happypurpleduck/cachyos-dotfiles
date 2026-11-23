@@ -103,6 +103,13 @@ else:
     assert "unapproved AUR package" in audit(ok=False).stderr
     (repo / "hosts/A/aur.txt").unlink()
 
+    (repo / "hosts/A/packages.txt").write_text("zed\n")
+    assert "first-party self-managed" in audit(ok=False).stderr
+    (repo / "hosts/A/packages.txt").unlink()
+    (repo / "hosts/A/aur.txt").write_text("mise\n")
+    assert "first-party self-managed" in audit(ok=False).stderr
+    (repo / "hosts/A/aur.txt").unlink()
+
     # Declined groups do not become attempted packages, unknown chosen groups fail.
     (repo / "hosts/A/optional.txt").write_text("nonexistent\n")
     assert "unknown optional group" in audit(ok=False).stderr

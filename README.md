@@ -149,6 +149,15 @@ binary against upstream release checksums; Zed uses its own built-in
 automatic updater. `dot apps` deliberately does not silently update either
 application during `dot install` or Git synchronization.
 
+Installed-package discovery is **not** an installation manifest: `dot packages`
+prints repository and foreign/local packages outside declared requirements,
+without changing tracked host files. Foreign entries are not necessarily AUR
+packages. To replicate a chosen extra on this machine, explicitly review and
+edit `hosts/<host>/packages.txt` for official repository packages or
+`hosts/<host>/aur.txt` for reviewed, allowlisted AUR exceptions. Previously
+pacman-installed mise/Zed are reported for manual migration, never adopted into
+managed host requirements or silently replaced.
+
 On a new machine, first install the shared system dependencies, then use
 `dot apps install mise zed` to bootstrap the upstream binaries. You can do
 this independently after login; missing either app must not break Zsh or

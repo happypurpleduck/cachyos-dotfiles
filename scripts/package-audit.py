@@ -70,6 +70,11 @@ def requirements(repo: Path, host: str) -> tuple[set[str], set[str]]:
         if name in common_aur and record["scope"] != "common":
             raise ValueError(f"AUR package '{name}' is host-only; cannot enable globally")
 
+    upstream_only = (required | aur) & {"mise", "zed"}
+    if upstream_only:
+        raise ValueError("mise/Zed must use first-party self-managed installs; remove from package declarations: "
+                         + ", ".join(sorted(upstream_only)))
+
     overlap = required & aur
     if overlap:
         raise ValueError("declared in repo and AUR lists: " + ", ".join(sorted(overlap)))
