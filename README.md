@@ -301,10 +301,31 @@ to guess which repository copy should receive it. Inspect and back up that
 file, copy it to the intended source under `common/` or
 `hosts/<this-host>/home/`, then run `dot link` when ready. Rebase conflicts
 stop the sync without force pushing; follow Git's `rebase --continue` or
-`rebase --abort` guidance. `dot pull` does not automatically apply new
-links. **Existing symlinks still point into Git, so updating tracked files can
-change the active config immediately**; preflight/activation protections are
-being built separately in #6.
+`rebase --abort` guidance. **Incoming shared/current-host changes are now
+reviewed before any Git rebase can touch linked source files.**
+
+```sh
+dot pull                  # fetch and preview; accepts only other-host changes
+dot pull --apply          # explicitly permit preflight-checked active updates
+dot doctor                # inspect resulting targets/dependencies
+dot link                  # apply newly added effective file links if wanted
+```
+
+When `dot save` encounters active remote changes, it preserves the local
+commit but refuses to rebase or push. Review with `dot pull`, then run
+`dot pull --apply` (after fixing missing dependencies) and `dot save`
+again. The upstream SHA is pinned after fetch: Git rebases only against the
+exact revision that passed the preflight. Incoming new file targets that would
+overwrite local app data are blocked. Remote scripts are **never executed**
+as part of the preflight. Git conflicts still stop safely for normal Git
+resolution; there is no auto-stash, forced push, or implicit service reload.
+
+**Important limitation:** Config files already linked into the checkout
+can still change as soon as the deliberately approved Git rebase runs;
+existing applications may reload those files automatically. For sensitive
+live sessions, review the diff and apply during a safe maintenance window.
+The command never silently activates *new links*, restarts services, or
+installs packages.
 
 ## Layout
 
