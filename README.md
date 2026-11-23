@@ -217,6 +217,16 @@ optional keyring units produce warnings. An existing polkit agent is never
 disabled without a verified replacement. Login-shell changes are offered
 only with explicit consent (or left to `chsh`).
 
+## Multi-machine acceptance and recovery
+
+The canonical scenario-by-scenario CachyOS VM test plan, including a graphical
+desktop VM, minimal/CLI VM, A/B concurrent editing, host overrides, asset
+failures, greeter recovery and transaction rollback, is in
+[docs/verification.md](docs/verification.md). Record real VM results using
+[docs/verification-result-template.md](docs/verification-result-template.md).
+CI tests use disposable homes, Git remotes and fake systemd roots; **they do
+not prove a fresh physical/VM CachyOS login works**.
+
 ## New machine
 
 Install CachyOS (any desktop, or none), log in, then:
