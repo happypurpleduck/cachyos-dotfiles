@@ -1,67 +1,14 @@
 #!/usr/bin/env bash
-# install-greeter — install the Mocha Quickshell greeter for greetd.
-# Run with sudo from your own account:   sudo ~/.config/quickshell/scripts/install-greeter
-#
-# Rollback (from a TTY, Ctrl+Alt+F2, if the greeter ever fails to start):
-#   sudo cp /etc/greetd/config.toml.bak-mocha /etc/greetd/config.toml && sudo systemctl restart greetd
+# Legacy direct installer was unsafe (unconditional rm -rf /etc/greetd assets).
+# Keep this compatibility entrypoint non-destructive.
 set -euo pipefail
-
-[ "$(id -u)" -eq 0 ] || { echo "run with sudo"; exit 1; }
-USER_NAME=${SUDO_USER:?run via sudo from your user account}
-USER_HOME=$(getent passwd "$USER_NAME" | cut -d: -f6)
-SRC="$USER_HOME/.config/quickshell"
-DEST=/etc/greetd/mocha-greeter
-STATE="$USER_HOME/.local/state/mocha-shell/theme.json"
-
-for b in cage qs greetd; do command -v $b >/dev/null || { echo "missing: $b (install it first)"; exit 1; }; done
-
-echo ":: copying greeter to $DEST"
-rm -rf "$DEST"
-mkdir -p "$DEST/modules/lock"
-cp -r "$SRC/core" "$SRC/components" "$DEST/"
-cp "$SRC/modules/lock/LockContent.qml" "$DEST/modules/lock/"
-cp "$SRC/greeter/shell.qml" "$DEST/shell.qml"
-
-# wallpaper + theme copy (owned by you so mocha-theme can keep them in sync)
-WALL=$(python3 -c "import json;print(json.load(open('$STATE'))['wallpaper'])" 2>/dev/null || echo "$USER_HOME/Pictures/Wallpapers/catppuccin-mocha/sword.jpg")
-cp "$WALL" "$DEST/wallpaper"
-python3 - "$STATE" "$DEST/theme.json" <<'EOF'
-import json, sys
-try: st = json.load(open(sys.argv[1]))
-except Exception: st = {"accent": "mauve", "mode": "auto"}
-st["wallpaper"] = "/etc/greetd/mocha-greeter/wallpaper"
-json.dump(st, open(sys.argv[2], "w"), indent=2)
+cat >&2 <<'EOF'
+The old direct greeter installer is disabled.
+Use these reviewed, separate steps from your normal account:
+  dot greeter                        # read-only preflight
+  dot greeter --stage                # stage verified greeter assets (sudo)
+  dot greeter --activate --confirm 'ACTIVATE greetd'
+To replace an existing DM, also pass --replace-display-manager explicitly.
+To recover from TTY, run dot greeter --rollback TXID.
 EOF
-
-FACE=""
-if [ -f "$USER_HOME/.face" ]; then cp "$USER_HOME/.face" "$DEST/face"; FACE="$DEST/face"; fi
-cat > "$DEST/greeter.json" <<EOF
-{ "user": "$USER_NAME", "face": "$FACE", "session": ["start-hyprland"] }
-EOF
-
-chown -R root:root "$DEST"
-chmod -R a+rX "$DEST"
-chown "$USER_NAME" "$DEST/theme.json" "$DEST/wallpaper"
-
-# cursor theme system-wide so the greeter (and root apps) can use it
-if [ -d "$USER_HOME/.local/share/icons/catppuccin-mocha-dark-cursors" ]; then
-  rm -rf /usr/share/icons/catppuccin-mocha-dark-cursors
-  cp -r "$USER_HOME/.local/share/icons/catppuccin-mocha-dark-cursors" /usr/share/icons/
-  chmod -R a+rX /usr/share/icons/catppuccin-mocha-dark-cursors
-fi
-
-echo ":: configuring greetd"
-[ -f /etc/greetd/config.toml.bak-mocha ] || cp /etc/greetd/config.toml /etc/greetd/config.toml.bak-mocha
-cat > /etc/greetd/config.toml <<EOF
-# Mocha greeter (Quickshell on cage). Previous config: config.toml.bak-mocha
-[terminal]
-vt = 1
-
-[default_session]
-command = "env MOCHA_THEME_FILE=$DEST/theme.json XCURSOR_THEME=catppuccin-mocha-dark-cursors XCURSOR_SIZE=24 QT_QPA_PLATFORM=wayland cage -s -m last -- qs -p $DEST"
-user = "greeter"
-EOF
-
-systemctl enable greetd >/dev/null 2>&1 || true
-echo ":: done. The new greeter appears at next login (or: sudo systemctl restart greetd — this ends your session)."
-echo "   Rollback: sudo cp /etc/greetd/config.toml.bak-mocha /etc/greetd/config.toml"
+exit 2

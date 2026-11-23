@@ -1,0 +1,84 @@
+name: Dotfiles static checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse shell scripts
+        run: |
+          bash -n install common/bin/.local/bin/dot scripts/fetch-assets system/setup tests/test-checkout-discovery.sh tests/test-two-host-sync.sh tests/test-system-preview.sh tests/test-host-identity.sh tests/test-install-recovery.sh
+      - name: Checkout discovery and host validation
+        run: bash tests/test-checkout-discovery.sh
+      - name: Two-host Git sync and conflict recovery
+        run: bash tests/test-two-host-sync.sh
+      - name: Compile and test effective-target planner
+        run: |
+          python3 -m py_compile scripts/effective-targets.py tests/test-effective-targets.py
+          python3 tests/test-effective-targets.py
+      - name: Doctor and install dry-run safety
+        run: |
+          python3 -m py_compile scripts/dot-doctor.py tests/test-doctor.py
+          python3 tests/test-doctor.py
+      - name: Host-aware file link and rollback regression
+        run: |
+          python3 -m py_compile scripts/dot-links.py tests/test-links.py
+          python3 tests/test-links.py
+      - name: Legacy Stow folded-directory migration and rollback
+        run: |
+          python3 -m py_compile scripts/migrate-folded.py tests/test-migrate-folded.py
+          python3 tests/test-migrate-folded.py
+      - name: System setup preview and privilege guard
+        run: bash tests/test-system-preview.sh
+      - name: Package / AUR / prerequisite simulation
+        run: |
+          python3 -m py_compile scripts/package-audit.py tests/test-package-audit.py
+          python3 tests/test-package-audit.py
+      - name: Portable paths and host identity
+        run: |
+          python3 -m py_compile tests/test-portable-paths.py
+          python3 tests/test-portable-paths.py
+          bash tests/test-host-identity.sh
+      - name: Offline first-login/theme readiness
+        run: |
+          python3 -m py_compile scripts/first-login.py tests/test-first-login.py
+          python3 tests/test-first-login.py
+      - name: Offline asset failure/atomic-promote regression
+        run: |
+          python3 -m py_compile scripts/asset-manager.py tests/test-assets.py
+          bash -n scripts/fetch-assets
+          python3 tests/test-assets.py
+      - name: Greeter stage/activation/rollback in fake root
+        run: |
+          python3 -m py_compile scripts/greeter-control.py tests/test-greeter.py
+          python3 tests/test-greeter.py
+      - name: Vendor-managed mise/Zed bootstrap and AUR approval safety
+        run: |
+          python3 -m py_compile scripts/upstream-apps.py tests/test-upstream-apps.py
+          python3 tests/test-upstream-apps.py
+      - name: Remote preflight and consented shared config update
+        run: |
+          python3 -m py_compile scripts/pull-preflight.py tests/test-pull-preflight.py
+          python3 tests/test-pull-preflight.py
+      - name: Repository-wide portability and minimal AUR policy audit
+        run: |
+          python3 -m py_compile tests/test-repository-audit.py
+          python3 tests/test-repository-audit.py
+      - name: Host system service gate and Bluetooth fake-root tests
+        run: |
+          python3 -m py_compile scripts/host-services.py tests/test-host-services.py
+          python3 tests/test-host-services.py
+      - name: Safe app-authored config import
+        run: |
+          python3 -m py_compile scripts/import-config.py tests/test-config-import.py
+          python3 tests/test-config-import.py
+      - name: Installer recovery and host-script consent
+        run: bash tests/test-install-recovery.sh
+
+      - name: Read-only inventory does not adopt unreviewed packages
+        run: bash tests/test-package-inventory.sh

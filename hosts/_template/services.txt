@@ -1,0 +1,3 @@
+# Opt-in SYSTEM services for this host. Remove the # to select.
+# bluetooth
+# Deliberately no automatic activation; run dot services --apply after review.

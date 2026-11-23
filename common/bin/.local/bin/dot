@@ -2,8 +2,22 @@
 # dot — manage ~/cachyos-dotfiles on this machine. Run `dot help`.
 set -euo pipefail
 
-DOT=${DOTFILES:-$HOME/cachyos-dotfiles}
-HOST=${DOT_HOST:-$(cat /etc/hostname 2>/dev/null || hostname)}
+# Resolve the real script, not the cwd or the ~/.local/bin symlink. This makes a
+# checkout in any directory usable after bootstrap without exporting DOTFILES.
+if [ -n "${DOTFILES:-}" ]; then
+  DOT=$DOTFILES
+else
+  script_path=$(realpath -- "${BASH_SOURCE[0]}")
+  checkout=$(realpath -- "$(dirname "$script_path")/../../../..")
+  if [ -f "$checkout/install" ] && [ -d "$checkout/common" ]; then
+    DOT=$checkout
+  else
+    DOT=$HOME/cachyos-dotfiles
+  fi
+fi
+DOT=$(realpath -m -- "$DOT")
+SYSTEM_HOST=$(cat /etc/hostname 2>/dev/null || hostname)
+HOST=${DOT_HOST:-$SYSTEM_HOST}
 HOSTDIR=$DOT/hosts/$HOST
 BACKUP=$HOME/.local/state/dotfiles-backup/$(date +%Y%m%d-%H%M%S)
 
@@ -20,81 +34,114 @@ warn() { printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
 die() { printf '\033[1;31m!!\033[0m %s\n' "$*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null || die "$1 is not installed (sudo pacman -S $2)"; }
 
+# Do not allow accidental traversal into a different host directory, and make
+# mistakes in DOTFILES fail early instead of touching an unintended checkout.
+[ -f "$DOT/install" ] && [ -d "$DOT/common" ] && [ -d "$DOT/hosts" ] || die "not a dotfiles checkout: $DOT"
+[[ "$HOST" =~ ^[[:alnum:]][[:alnum:]_.-]*$ ]] || die "invalid hostname: $HOST"
+case "$HOST" in .|..|_template) die "cannot activate reserved host: $HOST" ;; esac
+if [ "$HOST" != "$SYSTEM_HOST" ]; then
+  warn "DOT_HOST selects $HOST (system hostname: $SYSTEM_HOST); using that profile intentionally"
+fi
+
+# Explicit one-time machine/profile enrollment, stored locally (not in Git).
+HOST_ID_FILE="$HOME/.local/state/cachyos-dotfiles/confirmed-host"
+host_identity() {
+  [ -s /etc/machine-id ] || die "missing /etc/machine-id: cannot confirm host identity"
+  printf '%s:%s\n' "$HOST" "$(sha256sum /etc/machine-id | awk '{print $1}')"
+}
+check_host_identity() {
+  [ -f "$HOST_ID_FILE" ] && [ ! -L "$HOST_ID_FILE" ] &&
+    [ "$(cat "$HOST_ID_FILE")" = "$(host_identity)" ] && return 0
+  die "host profile $HOST is not confirmed for this machine; run dot confirm-host"
+}
+cmd_confirm_host() {
+  local answer temp
+  [ -d "$HOSTDIR/home" ] || die "create hosts/$HOST first with dot new-host"
+  say "selected profile: hosts/$HOST (system hostname: $SYSTEM_HOST)"
+  say "confirm only after checking this machine's monitors, GPU, audio and packages"
+  read -r -p "Type $HOST to authorize this physical machine: " answer
+  [ "$answer" = "$HOST" ] || die "host confirmation cancelled"
+  [ ! -L "$HOST_ID_FILE" ] || die "refusing symlinked host-selection state"
+  umask 077
+  mkdir -p -- "$(dirname "$HOST_ID_FILE")"
+  temp=$(mktemp "$(dirname "$HOST_ID_FILE")/.host-XXXXXXXX")
+  host_identity > "$temp"
+  mv -f -- "$temp" "$HOST_ID_FILE"
+  say "confirmed hosts/$HOST on this machine (local state only)"
+}
+
 common_pkgs() { (cd "$DOT/common" && for d in */; do echo "${d%/}"; done); }
 has_host() { [ -d "$HOSTDIR/home" ]; }
 
-# every repo file with its target: "<source>\t<target>"
+# Read-only precedence preview. Does not stow, link, back up or activate files.
+# The linker will consume the same ownership semantics in a follow-up PR.
+cmd_plan() {
+  need python3 python
+  python3 "$DOT/scripts/effective-targets.py" --repo "$DOT" --host "$HOST" --home "$HOME" "$@"
+}
+
+# Read-only inventory for a currently running system; no sudo or Stow.
+cmd_doctor() {
+  need python3 python
+  python3 "$DOT/scripts/dot-doctor.py" --repo "$DOT" --host "$HOST" --home "$HOME" "$@"
+}
+
+# Every *effective* repo file with its target. This is a single source of
+# truth for status, replaced-link checks, and host-safe sync handling.
 each_file() {
-  local pkg
-  for pkg in $(common_pkgs); do
-    (cd "$DOT/common/$pkg" && find . \( -type f -o -type l \) ! -name .gitignore) | sed 's|^\./||' |
-      while read -r f; do printf '%s\t%s\n' "$DOT/common/$pkg/$f" "$HOME/$f"; done
-  done
-  if has_host; then
-    (cd "$HOSTDIR/home" && find . \( -type f -o -type l \) ! -name .gitignore) | sed 's|^\./||' |
-      while read -r f; do printf '%s\t%s\n' "$HOSTDIR/home/$f" "$HOME/$f"; done
-  fi
+  python3 "$DOT/scripts/effective-targets.py" --repo "$DOT" --host "$HOST" \
+    --home "$HOME" --json |
+    python3 -c 'import json,sys; d=json.load(sys.stdin); [print(x["source"]+"\t"+x["target"]) for x in d["entries"]]'
 }
 
-linked() { [ "$(readlink -f "$2" 2>/dev/null)" = "$(readlink -f "$1")" ]; }
-
-# Move files that would block stow (real files where a link should go) to $BACKUP.
-backup_conflicts() {
-  local src dst n=0
-  while IFS=$'\t' read -r src dst; do
-    if [ -e "$dst" ] || [ -L "$dst" ]; then
-      linked "$src" "$dst" && continue
-      mkdir -p "$BACKUP/$(dirname "${dst#"$HOME"/}")"
-      mv "$dst" "$BACKUP/${dst#"$HOME"/}"
-      # drop directories this leaves empty, so stow can link the whole directory
-      rmdir -p --ignore-fail-on-non-empty "$(dirname "$dst")" 2>/dev/null || true
-      n=$((n + 1))
-    fi
-  done < <(each_file)
-  [ $n -eq 0 ] || warn "moved $n existing file(s) out of the way → $BACKUP"
+# Verify a managed symlink resolves to the effective source.
+linked() {
+  [ -L "$2" ] || return 1
+  local actual expected
+  actual=$(realpath -- "$2" 2>/dev/null) || return 1
+  expected=$(realpath -- "$1" 2>/dev/null) || return 1
+  [ "$actual" = "$expected" ]
 }
 
+# Per-file owner-aware transactional linking replaces the unsafe "stow common
+# then stow host" overlay. Existing folded Stow directory symlinks must be
+# migrated separately; no app directory is flattened implicitly.
 cmd_link() {
-  need stow stow
-  local d
-  backup_conflicts
-  for d in "${SHARED_DIRS[@]}"; do mkdir -p "$HOME/$d"; done
-  say "linking common: $(common_pkgs | tr '\n' ' ')"
-  # shellcheck disable=SC2046
-  stow -d "$DOT/common" -t "$HOME" --restow $(common_pkgs)
-  if has_host; then
-    say "linking hosts/$HOST"
-    # host files are linked one by one, never as whole directories, so app data
-    # next to them (OBS logs, stream keys, …) can't end up in the repo
-    stow -d "$HOSTDIR" -t "$HOME" --no-folding --restow home
-  else
-    warn "no hosts/$HOST yet — only the shared config is linked. Create it with: dot new-host"
+  need python3 python
+  if [ "${1:-}" = "--dry-run" ]; then
+    [ "$#" -eq 1 ] || die "usage: dot link [--dry-run|--backup-conflicts]"
+    cmd_doctor --strict
+    python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" \
+      --home "$HOME" --dry-run
+    return
   fi
-  seed
-  # Hyprland doesn't notice edits made through the symlinks; reload it ourselves
-  if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && command -v hyprctl >/dev/null; then
-    hyprctl reload >/dev/null && echo "   reloaded Hyprland"
-  fi
-}
-
-# seed/: configs apps rewrite all the time (btop, waypaper, zed). Copied once, never linked.
-seed() {
-  [ -d "$DOT/seed" ] || return 0
-  (cd "$DOT/seed" && find . -type f) | sed 's|^\./||' | while read -r f; do
-    if [ ! -e "$HOME/$f" ]; then
-      mkdir -p "$HOME/$(dirname "$f")"
-      cp "$DOT/seed/$f" "$HOME/$f"
-      echo "   seeded ~/$f"
-    fi
-  done
+  check_host_identity
+  # The Python linker includes first-use seeds in the same verified transaction.
+  # Keep its exit status even when cmd_link runs inside an if/command substitution.
+  python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" \
+    --home "$HOME" "$@"
 }
 
 cmd_unlink() {
-  need stow stow
-  # shellcheck disable=SC2046
-  stow -d "$DOT/common" -t "$HOME" -D $(common_pkgs)
-  if has_host; then stow -d "$HOSTDIR" -t "$HOME" -D home; fi
-  say "unlinked (your files in the repo are untouched)"
+  check_host_identity
+  need python3 python
+  python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" \
+    --home "$HOME" --unlink "$@"
+}
+
+cmd_migrate_folded() {
+  check_host_identity
+  need python3 python
+  python3 "$DOT/scripts/migrate-folded.py" --repo "$DOT" --host "$HOST" \
+    --home "$HOME" "$@"
+}
+
+cmd_rollback() {
+  check_host_identity
+  [ "$#" -eq 1 ] || die "usage: dot rollback <transaction-id>"
+  need python3 python
+  python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" \
+    --home "$HOME" --rollback "$1"
 }
 
 # Some apps save by writing a new file and renaming it over the old one, which
@@ -119,57 +166,149 @@ cmd_status() {
   while IFS=$'\t' read -r src dst; do
     if linked "$src" "$dst"; then continue; fi
     if [ -f "$dst" ] && [ ! -L "$dst" ]; then
-      echo "   replaced by an app (dot save takes it back): ~/${dst#"$HOME"/}"
+      echo "   replaced by an app (not auto-published): ~/${dst#"$HOME"/}"
     else
       echo "   not linked (dot link): ~/${dst#"$HOME"/}"
     fi
     bad=1
   done < <(each_file)
+  if ! python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" \
+      --home "$HOME" --check-retired; then bad=1; fi
   [ $bad -eq 1 ] || echo "   all links ok"
 }
 
-# dot diff [--stat] [path…] — everything `dot save` would commit:
-#   1. changes in the repo (edits through the links, new and deleted files)
-#   2. files an app replaced with a plain copy (shown against the repo version)
-# Paths filter part 1 (repo paths, e.g. `dot diff common/hypr`).
+# Common files are shared, but a normal save may only publish tracked changes
+# in common/ and the currently selected host. Newly added files require explicit
+# 'git add'; already staged foreign changes require --allow-staged.
+owned_path() {
+  case "$1" in
+    common/* | "hosts/$HOST/"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+check_foreign_unstaged() {
+  local f bad=0
+  while IFS= read -r f; do
+    if ! owned_path "$f"; then
+      warn "not owned by $HOST: $f (not staged or committed)"
+      bad=1
+    fi
+  done < <(git -C "$DOT" diff --name-only)
+  [ "$bad" -eq 0 ] || die "other-host or repository maintenance edits are present; commit them explicitly with git before using dot save"
+}
+
+check_staged_scope() {
+  local f bad=0
+  while IFS= read -r f; do
+    if ! owned_path "$f"; then
+      warn "already staged outside this host's scope: $f"
+      bad=1
+    fi
+  done < <(git -C "$DOT" diff --cached --name-only)
+  [ "$bad" -eq 0 ] || die "use git to unstage these paths, or explicitly run dot save --allow-staged MESSAGE"
+}
+
+check_replaced_links() {
+  local src dst bad=0
+  while IFS=$'\t' read -r src dst; do
+    if [ -f "$dst" ] && [ ! -L "$dst" ] && ! linked "$src" "$dst"; then
+      warn "app replaced managed link: ~/${dst#"$HOME"/} (source: ${src#"$DOT"/})"
+      bad=1
+    fi
+  done < <(each_file)
+  [ "$bad" -eq 0 ] || die "not absorbing app files automatically: inspect and back up the replacements before explicitly copying them to the intended common/ or hosts/$HOST/ source"
+}
+
+# dot diff [--stat] [repo paths…] — tracked changes in common + this host,
+# plus local app replacements. Untracked files are intentionally excluded:
+# a normal dot save will not commit them.
 cmd_diff() {
-  local stat=() src dst f color=never
+  local stat=() src dst color=never
   [ "${1:-}" = "--stat" ] && { stat=(--stat); shift; }
   [ -t 1 ] && color=always
+  local paths=("$@")
+  if [ "${#paths[@]}" -eq 0 ]; then
+    paths=(common)
+    has_host && paths+=("hosts/$HOST")
+  fi
   {
-    git -C "$DOT" --no-pager diff --color=$color "${stat[@]}" HEAD -- "$@"
-    # untracked files aren't in `git diff`; show them as new
-    git -C "$DOT" ls-files --others --exclude-standard -- "$@" | while read -r f; do
-      git -C "$DOT" --no-pager diff --color=$color "${stat[@]}" --no-index /dev/null "$f" || true
-    done
+    git -C "$DOT" --no-pager diff --color="$color" "${stat[@]}" HEAD -- "${paths[@]}"
     [ $# -eq 0 ] || exit 0
     while IFS=$'\t' read -r src dst; do
       if [ -f "$dst" ] && [ ! -L "$dst" ] && ! linked "$src" "$dst"; then
-        printf '\n\033[1;33m## replaced by an app: ~/%s (dot save copies it into the repo)\033[0m\n' "${dst#"$HOME"/}"
-        git --no-pager diff --color=$color "${stat[@]}" --no-index "$src" "$dst" || true
+        printf '\n## app-replaced link (not auto-published): ~/%s\n' "${dst#"$HOME"/}"
+        git --no-pager diff --color="$color" "${stat[@]}" --no-index "$src" "$dst" || true
       fi
     done < <(each_file)
   } | if [ -t 1 ]; then less -RFX; else cat; fi
 }
 
 cmd_save() {
-  local msg=${1:-"$HOST: update"}
-  absorb
-  git -C "$DOT" add -A
+  check_host_identity
+  local allow_staged=0
+  if [ "${1:-}" = "--allow-staged" ]; then
+    allow_staged=1
+    shift
+  fi
+  local msg=${*:-"$HOST: update"}
+
+  check_replaced_links
+  check_foreign_unstaged
+  if [ "$allow_staged" -eq 0 ]; then check_staged_scope; fi
+
+  # add -u never stages untracked files, and never stages other hosts' files.
+  git -C "$DOT" add -u -- common
+  if has_host; then git -C "$DOT" add -u -- "hosts/$HOST"; fi
+
   if git -C "$DOT" diff --cached --quiet; then
     say "nothing to commit"
   else
-    git -C "$DOT" commit -q -m "$msg" && say "committed: $msg"
+    git -C "$DOT" commit -m "$msg" && say "committed: $msg"
   fi
-  git -C "$DOT" pull -q --rebase --autostash
-  git -C "$DOT" push -q && say "pushed"
-  cmd_link >/dev/null
+
+  # Fetch and stage a read-only preflight before any Git command can mutate
+  # linked sources. Remote active/shared changes require explicit dot pull --apply.
+  local remote_sha
+  remote_sha=$(python3 "$DOT/scripts/pull-preflight.py" --repo "$DOT" \
+    --host "$HOST" --home "$HOME" --emit-sha) || {
+    warn "saved a local commit but did not rebase or push; review: dot pull"
+    warn "after verification, run dot pull --apply and then dot save"
+    return 1
+  }
+  if ! git -C "$DOT" rebase "$remote_sha"; then
+    warn "rebase conflicted. Resolve via git rebase --continue or --abort; no force push"
+    return 1
+  fi
+  if ! git -C "$DOT" push; then
+    warn "push rejected/failed. Local commit preserved; inspect remote and repeat dot pull"
+    return 1
+  fi
+  say "pushed; new targets require deliberate dot link after reviewing dot doctor"
 }
 
 cmd_pull() {
-  git -C "$DOT" pull --rebase --autostash
-  cmd_link
-  say "restart the shell with: pkill -x quickshell; pkill -x qs; hyprctl dispatch 'hl.dsp.exec_cmd(\"qs\")'"
+  check_host_identity
+  local consent=() remote_sha
+  case "${1:-}" in
+    "") [ "$#" -eq 0 ] || die "usage: dot pull [--apply]" ;;
+    --apply) [ "$#" -eq 1 ] || die "usage: dot pull [--apply]"; consent=(--apply) ;;
+    *) die "usage: dot pull [--apply]" ;;
+  esac
+  if ! git -C "$DOT" diff --quiet || ! git -C "$DOT" diff --cached --quiet; then
+    die "working tree has tracked changes; save/resolve them before remote sync"
+  fi
+  remote_sha=$(python3 "$DOT/scripts/pull-preflight.py" --repo "$DOT" \
+    --host "$HOST" --home "$HOME" --emit-sha "${consent[@]}") || {
+      warn "remote preflight blocked sync. Nothing in tracked home config was updated."
+      return 1
+    }
+  if ! git -C "$DOT" rebase "$remote_sha"; then
+    warn "rebase stopped. Use git -C \"$DOT\" rebase --continue / --abort."
+    return 1
+  fi
+  say "synced reviewed revision $remote_sha; run dot doctor and dot link as needed"
+  warn "existing live symlinks into Git may reflect changes immediately after rebase"
 }
 
 pkglist() { grep -v -E '^\s*(#|$)' "$1" 2>/dev/null | awk '{print $1}' || true; }
@@ -207,6 +346,7 @@ opt_pkgs() {
 # dot optional <group>…   install these groups
 # dot optional --list     show groups and this machine's answers
 cmd_optional() {
+  check_host_identity
   [ -d "$HOSTDIR" ] || die "no hosts/$HOST (dot new-host)"
   local g a st ask_all=0 picked=()
   case ${1:-} in
@@ -233,71 +373,246 @@ cmd_optional() {
 }
 
 cmd_packages() {
+  check_host_identity
+  need pacman pacman
   [ -d "$HOSTDIR" ] || die "no hosts/$HOST (dot new-host)"
-  local common aur
-  common=$( (pkglist "$DOT/packages/common.txt"; opt_pkgs) | sort -u)
-  aur=$( (pkglist "$DOT/packages/aur.txt"; opt_pkgs aur) | sort -u)
-  {
-    echo "# $HOST — explicitly installed repo packages beyond packages/common.txt and optional groups."
-    echo "# Snapshot from \`dot packages\` ($(date +%F)); edit freely."
-    comm -23 <(pacman -Qqen | sort -u) <(echo "$common")
-  } >"$HOSTDIR/packages.txt"
-  {
-    echo "# $HOST — AUR packages beyond packages/aur.txt (snapshot $(date +%F))."
-    comm -23 <(pacman -Qqem | sort -u) <(echo "$aur")
-  } >"$HOSTDIR/aur.txt"
-  say "updated hosts/$HOST/packages.txt and aur.txt"
-  git -C "$DOT" --no-pager diff --stat -- "hosts/$HOST"
+  local desired_repo desired_foreign native_extra foreign_extra
+  # Inspection is NOT adoption. Existing-machine packages may be historical,
+  # vendor self-managed, locally built, or irrelevant to another machine.
+  desired_repo=$( (pkglist "$DOT/packages/common.txt";
+                   pkglist "$HOSTDIR/packages.txt"; opt_pkgs) | sort -u)
+  desired_foreign=$( (pkglist "$DOT/packages/aur.txt";
+                      pkglist "$HOSTDIR/aur.txt"; opt_pkgs aur) | sort -u)
+  native_extra=$(comm -23 <(pacman -Qqen | sort -u) <(printf '%s\n' "$desired_repo" | sort -u))
+  foreign_extra=$(comm -23 <(pacman -Qqem | sort -u) <(printf '%s\n' "$desired_foreign" | sort -u))
+  say "read-only installed-package inventory for $HOST (NOT adopted into host manifests)"
+  printf '\n:: installed repository packages outside explicit dotfiles requirements:\n%s\n' "$native_extra"
+  printf '\n:: installed foreign/local packages outside explicit dotfiles requirements:\n%s\n' "$foreign_extra"
+  warn "Review each item before intentionally editing hosts/$HOST/packages.txt or aur.txt."
+  warn "Foreign/local packages are NOT automatically approved AUR dependencies."
+  if printf '%s\n%s\n' "$native_extra" "$foreign_extra" | grep -Eq '^(mise|zed)$'; then
+    warn "mise/Zed already package-managed: migrate manually before using upstream self-update."
+  fi
+  say "no tracked source files were modified; dot save cannot publish this inventory"
 }
 
 cmd_install_packages() {
-  local repo aurs avail missing
-  repo=$( (pkglist "$DOT/packages/common.txt"; pkglist "$HOSTDIR/packages.txt"; opt_pkgs) | sort -u)
-  avail=$(pacman -Slq | sort -u)
-  missing=$(comm -23 <(echo "$repo") <(echo "$avail"))
-  [ -z "$missing" ] || warn "not in the repos, skipped: $(echo $missing)"
-  say "installing repo packages (sudo)"
-  # shellcheck disable=SC2046
-  sudo pacman -S --needed $(comm -12 <(echo "$repo") <(echo "$avail"))
-  aurs=$( (pkglist "$DOT/packages/aur.txt"; pkglist "$HOSTDIR/aur.txt"; opt_pkgs aur) | sort -u)
-  if [ -n "$aurs" ]; then
-    say "AUR packages: $(echo $aurs)"
-    if command -v paru >/dev/null; then
-      # shellcheck disable=SC2086
-      paru -S --needed $aurs
-    else
-      warn "paru not installed — install these yourself: $(echo $aurs)"
-    fi
+  check_host_identity
+  need python3 python
+  # AUR installs always require a documented exception and interactive approval.
+  local missing_aur answer approval=()
+  missing_aur=$(python3 "$DOT/scripts/package-audit.py" --repo "$DOT" --host "$HOST" --json |
+    python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["missing_aur"]))') ||
+    die "package audit failed before installation"
+  if [ -n "$missing_aur" ]; then
+    warn "AUR exceptions required: $missing_aur"
+    warn "Review the upstream publisher and each AUR PKGBUILD before approving."
+    read -r -p "Type APPROVE AUR to install these exceptions: " answer
+    [ "$answer" = "APPROVE AUR" ] ||
+      die "AUR approval declined; no packages installed"
+    approval=(--approve-aur)
   fi
+  python3 "$DOT/scripts/package-audit.py" --repo "$DOT" --host "$HOST" \
+    --install "${approval[@]}"
 }
 
+cmd_greeter() {
+  need python3 python
+  case "${1:-}" in
+    --stage | --activate | --rollback)
+      check_host_identity
+      sudo python3 "$DOT/scripts/greeter-control.py" --home "$HOME" \
+        --source "$HOME/.config/quickshell" --user "$(id -un)" "$@"
+      ;;
+    *)
+      python3 "$DOT/scripts/greeter-control.py" --home "$HOME" \
+        --source "$HOME/.config/quickshell" --user "$(id -un)" "$@"
+      ;;
+  esac
+}
+
+# Explicit, user-owned vendor installation; never part of unattended dot install.
+cmd_services() {
+  need python3 python
+  local arg
+  for arg in "$@"; do
+    if [ "$arg" = "--apply" ]; then check_host_identity; break; fi
+  done
+  python3 "$DOT/scripts/host-services.py" --repo "$DOT" --host "$HOST" "$@"
+}
+
+cmd_apps() {
+  need python3 python
+  python3 "$DOT/scripts/upstream-apps.py" --home "$HOME" "$@"
+}
+
+cmd_assets() {
+  need python3 python
+  python3 "$DOT/scripts/asset-manager.py" --home "$HOME" "$@"
+}
+
+cmd_system_setup() {
+  case "${1:-}" in
+    "" | --dry-run)
+      [ "$#" -le 1 ] || die "usage: dot system-setup [--apply|--dry-run]"
+      "$DOT/system/setup" "$@"
+      ;;
+    --apply)
+      [ "$#" -eq 1 ] || die "usage: dot system-setup [--apply]"
+      check_host_identity
+      sudo "$DOT/system/setup" --apply
+      ;;
+    *) die "usage: dot system-setup [--apply]" ;;
+  esac
+}
+# Track only units initially disabled by this install.
+INSTALL_NEWLY_ENABLED=()
+enable_install_user_unit() {
+  local unit=$1
+  if systemctl --user is-enabled --quiet "$unit" >/dev/null 2>&1; then return 0; fi
+  INSTALL_NEWLY_ENABLED+=("$unit")
+  systemctl --user enable "$unit"
+}
+
+# If a later pre-login stage fails, undo the links from THIS install only.
+# Package-manager transactions and optional asset downloads are not reverted.
+install_recover() {
+  local txid=$1 failed_phase=$2
+  warn "installation stopped during: $failed_phase"
+  local i unit
+  for ((i=${#INSTALL_NEWLY_ENABLED[@]}-1; i>=0; i--)); do
+    unit=${INSTALL_NEWLY_ENABLED[i]}
+    if systemctl --user is-enabled --quiet "$unit" >/dev/null 2>&1; then
+      if systemctl --user disable "$unit"; then
+        warn "restored initially disabled user unit: $unit"
+      else
+        warn "FAILED to restore user unit $unit; disable it manually before reboot"
+      fi
+    fi
+  done
+  if [ -n "$txid" ]; then
+    if python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" \
+      --home "$HOME" --rollback "$txid"; then
+      warn "managed link changes restored; previous HOME files remain in backup"
+    else
+      warn "automatic link rollback failed; inspect journal for $txid before proceeding"
+    fi
+  fi
+  warn "installed pacman/AUR packages and optional downloads are NOT automatically removed"
+  warn "if --apply-system was used, restore PAM from its root-owned backup as instructed"
+  return 1
+}
+
+# Installation has explicit preflight and failure boundaries. It never runs a
+# host script or swaps a login manager automatically.
 cmd_install() {
-  [ -d "$HOSTDIR" ] || { warn "no hosts/$HOST yet"; read -r -p ":: create it from the template now? [Y/n] " a; [[ ${a,,} == n* ]] || cmd_new_host "$HOST"; }
+  if [ "${1:-}" = "--dry-run" ]; then
+    [ "$#" -eq 1 ] || die "usage: dot install [--dry-run|--apply-system]"
+    cmd_doctor --strict
+    python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" --home "$HOME" --dry-run
+    return
+  fi
+  check_host_identity
+  local apply_system=0 a link_output link_txid=""
+  INSTALL_NEWLY_ENABLED=()
+  if [ "${1:-}" = "--apply-system" ]; then
+    [ "$#" -eq 1 ] || die "usage: dot install [--dry-run|--apply-system]"
+    apply_system=1
+  elif [ "$#" -ne 0 ]; then
+    die "usage: dot install [--dry-run|--apply-system]"
+  fi
+  [ -d "$HOSTDIR/home" ] || die "create hosts/$HOST and run dot confirm-host first"
   if [ -n "$(opt_groups)" ]; then
-    say "optional apps (answers are saved in hosts/$HOST/optional.txt)"
+    say "optional package groups (host-owned choices)"
     cmd_optional_ask_only
   fi
+  python3 "$DOT/scripts/package-audit.py" --repo "$DOT" --host "$HOST" ||
+    die "package prerequisites unavailable"
+  python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" \
+    --home "$HOME" --dry-run || die "unsafe links; inspect dot doctor"
   cmd_install_packages
-  say "downloading assets (wallpapers, cursors, mpv scripts, apps)"
-  "$DOT/scripts/fetch-assets"
-  cmd_link
-  say "system files (sudo): keyring unlock at login, DDC/CI, Chrome theme policy, greeter"
-  sudo "$DOT/system/setup"
-  say "user services"
-  systemctl --user daemon-reload
-  systemctl --user enable gnome-keyring-daemon.socket hokum.service 2>/dev/null || true
-  systemctl --user disable hyprpolkitagent.service 2>/dev/null || true
-  fc-cache -f >/dev/null
+  say "attempting optional assets (independent of core config)"
+  "$DOT/scripts/fetch-assets" || warn "optional asset downloader failed; solid wallpaper fallback remains"
+  # Fail BEFORE linking if the user manager or required notifier is missing.
+  if ! systemctl --user daemon-reload; then
+    die "user systemd manager unavailable; log into a user session before install"
+  fi
+  if ! systemctl --user cat hokum.service >/dev/null 2>&1; then
+    die "required hokum.service unit missing after installing prerequisites"
+  fi
+  if ! link_output=$(cmd_link); then
+    die "managed link transaction failed; inspect its rollback journal"
+  fi
+  printf "%s\n" "$link_output"
+  link_txid=$(printf "%s\n" "$link_output" | awk '/rollback with: dot rollback / {print $NF}' | tail -n1)
+  say "generating essential first-login themes offline"
+  if ! python3 "$DOT/scripts/first-login.py" --home "$HOME"; then
+    install_recover "$link_txid" "offline theme generation"
+    return 1
+  fi
+  if ! fc-cache -f >/dev/null; then
+    install_recover "$link_txid" "font cache"
+    return 1
+  fi
+  if ! enable_install_user_unit hokum.service; then
+    install_recover "$link_txid" "Hokum user service enablement"
+    return 1
+  fi
+  if systemctl --user cat gnome-keyring-daemon.socket >/dev/null 2>&1; then
+    enable_install_user_unit gnome-keyring-daemon.socket ||
+      warn "optional keyring socket could not be enabled"
+  else
+    warn "optional gnome-keyring-daemon.socket unavailable"
+  fi
+  say "host-selected SYSTEM services (read-only; opt-in separately)"
+  python3 "$DOT/scripts/host-services.py" --repo "$DOT" --host "$HOST" ||
+    warn "host system services need attention; use dot services --apply"
+  if [ "$apply_system" -eq 1 ]; then
+    say "explicitly applying limited PAM/DDC setup (sudo)"
+    if ! sudo "$DOT/system/setup" --apply; then
+      install_recover "$link_txid" "limited PAM/DDC system integration"
+      return 1
+    fi
+  else
+    say "system files and login manager left unchanged; dot system-setup previews"
+  fi
+  # Never run an arbitrary host-specific setup script during routine install.
   if [ -x "$HOSTDIR/setup" ]; then
-    say "hosts/$HOST/setup"
-    "$HOSTDIR/setup"
+    warn "host-specific setup remains unapplied; review with dot host-setup"
+  fi
+  if command -v zsh >/dev/null &&
+     [ "$(getent passwd "$(id -un)" | cut -d: -f7)" != "$(command -v zsh)" ]; then
+    if [ -t 0 ]; then
+      read -r -p ":: switch login shell to zsh? [y/N] " a
+      if [[ ${a,,} == y* ]]; then
+        chsh -s "$(command -v zsh)" || warn "shell change failed; adjust manually"
+      fi
+    else
+      warn "login shell unchanged; optionally run chsh -s $(command -v zsh)"
+    fi
   fi
   if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
-    say "applying theme"
-    ~/.config/quickshell/scripts/mocha-theme apply || true
-    ~/.config/quickshell/scripts/mocha-theme thumbs >/dev/null || true
+    "$HOME/.config/quickshell/scripts/mocha-theme" restore ||
+      warn "active wallpaper refresh failed; generated theme files remain"
   fi
-  say "done. Log out and back in (the greeter unlocks the keyring and starts Hyprland)."
+  say "install complete: managed links and themes ready; no greeter replacement"
+  say "recovery link transaction: ${link_txid:-none (no changes)}"
+}
+
+# Host-specific executable setup scripts must be reviewed and explicitly run.
+cmd_host_setup() {
+  check_host_identity
+  [ -x "$HOSTDIR/setup" ] || { say "no host setup script selected"; return 0; }
+  say "host setup script: $HOSTDIR/setup"
+  if [ "${1:-}" != "--apply" ]; then
+    say "PREVIEW ONLY; inspect its source, then dot host-setup --apply"
+    return 0
+  fi
+  [ "$#" -eq 1 ] || die "usage: dot host-setup [--apply]"
+  local consent
+  read -r -p "Type RUN HOST SETUP to execute the selected script: " consent
+  [ "$consent" = "RUN HOST SETUP" ] || die "host setup not authorized"
+  "$HOSTDIR/setup"
 }
 
 # record answers for unasked groups without installing (install happens right after)
@@ -311,74 +626,101 @@ cmd_optional_ask_only() {
 }
 
 cmd_new_host() {
+  [ "$#" -le 1 ] || die "usage: dot new-host [name]"
   local name=${1:-$HOST}
+  [[ "$name" =~ ^[[:alnum:]][[:alnum:]_.-]*$ ]] ||
+    die "invalid hostname: $name"
+  case "$name" in .|..|_template) die "cannot create reserved host: $name" ;; esac
   [ -e "$DOT/hosts/$name" ] && die "hosts/$name already exists"
   cp -r "$DOT/hosts/_template" "$DOT/hosts/$name"
   sed -i "s/HOSTNAME/$name/g" "$DOT/hosts/$name/README.md" "$DOT/hosts/$name/home/.config/hypr/host.lua"
   say "created hosts/$name — edit its host.lua (monitors: hyprctl monitors) and host.json, then: dot link"
 }
 
-# dot add [--host] <path>… — move files into the repo and link them back.
+# dot add [--host] <path>… — preview and copy files; never move HOME files.
 #   common package = first directory under ~/.config (or the file name for dotfiles in ~)
+# Safe import: preview by default; a copy does not publish or relink.
 cmd_add() {
-  local to_host=0 f rel pkg dest
-  [ "${1:-}" = "--host" ] && { to_host=1; shift; }
-  [ $# -gt 0 ] || die "usage: dot add [--host] <path>…"
-  for f in "$@"; do
-    f=$(realpath -s "$f")
-    [ -f "$f" ] && [ ! -L "$f" ] || die "$f: not a regular file"
-    rel=${f#"$HOME"/}
-    [ "$rel" != "$f" ] || die "$f is outside your home"
-    if [ $to_host -eq 1 ]; then
-      dest=$HOSTDIR/home/$rel
+  check_host_identity
+  need python3 python
+  local args=() arg
+  for arg in "$@"; do
+    if [ "$arg" = "--host" ]; then
+      args+=(--host-only)
     else
-      case $rel in
-        .config/*/*) pkg=$(echo "$rel" | cut -d/ -f2) ;;
-        .local/share/*/*) pkg=$(echo "$rel" | cut -d/ -f3) ;;
-        *) pkg=$(basename "$rel" | sed 's/^\.//; s/rc$//; s/\..*$//') ;;
-      esac
-      dest=$DOT/common/$pkg/$rel
+      args+=("$arg")
     fi
-    mkdir -p "$(dirname "$dest")"
-    mv "$f" "$dest"
-    echo "   ~/$rel → ${dest#"$DOT"/}"
   done
-  cmd_link >/dev/null
+  python3 "$DOT/scripts/import-config.py" --repo "$DOT" --home "$HOME" \
+    --host "$HOST" "${args[@]}"
 }
 
 cmd_help() {
   cat <<EOF
-dot — ~/cachyos-dotfiles on $HOST
+dot — $DOT on $HOST
 
-  dot install          first-time setup: packages, assets, links, system files, services
-  dot link             (re)link everything for this machine (common/* + hosts/$HOST)
-  dot unlink           remove the links (repo files stay)
+  dot install          packages, assets, links, user services (no system changes)
+  dot install --apply-system  explicitly include limited PAM/DDC system setup
+  dot system-setup [--apply]  preview or apply limited PAM/DDC setup
+  dot greeter [--stage|--activate|--rollback TXID]  safe login-manager control
+  dot host-setup [--apply]    preview or explicitly run this host's setup script
+  dot services                read-only host system service (Bluetooth) status
+  dot services --apply --confirm 'ENABLE HOST SERVICES'  explicit activation
+  dot apps status             first-party mise/Zed install type and update policy
+  dot apps install mise zed   explicit vendor installer bootstraps (no pacman/AUR)
+  dot apps update mise        use mise self-update; Zed updates on restart
+  dot assets --status          inspect optional downloads without network
+  dot assets --asset t3code    fetch one optional asset (use --force to refresh)
+  dot link             safely link this host's effective per-file configuration
+  dot link --backup-conflicts  back up colliding home files before linking
+  dot unlink           unlink managed files without deleting app data
+  dot rollback TXID    restore links/files from an applied transaction
+  dot migrate-folded [--apply]  preview or explicitly migrate legacy Stow dir links
   dot status           git status + links that are missing or were replaced by an app
-  dot diff [--stat] [path…]  what \`dot save\` would commit (line by line, or a summary)
-  dot save [message]   take back app-replaced files, commit, pull --rebase, push
-  dot pull             pull other machines' changes and relink
-  dot add [--host] F…  move file(s) into the repo (common, or this host with --host) and link
-  dot packages         snapshot this machine's extra packages into hosts/$HOST
+  dot plan [--json]    read-only effective common/host target precedence
+  dot doctor [--json|--strict]   preflight links, packages, display-manager status
+  dot install --dry-run          preview only; does not install or activate
+  dot link --dry-run             preview only; does not touch HOME
+  dot diff [--stat] [path…]  tracked shared/host changes; ignores untracked files
+  dot save [message]   commit tracked shared/host edits, rebase and push
+  dot save --allow-staged MSG  also publish explicitly staged other-host/maintenance files
+  dot pull             preview remote active changes; sync other-host-only edits
+  dot pull --apply     apply a reviewed preflight-passing remote revision
+  dot add [--host] F…  preview safe app config copy (never moves HOME)
+  dot add --apply [--host] F…  copy reviewed config; link and stage separately
+  dot packages         inspect installed extras; manually choose managed host packages
   dot optional [grp…]  optional apps: ask about new groups, or install the named ones
                        (--list shows them, --ask asks about all of them again)
   dot new-host [name]  start hosts/<name> from hosts/_template
+  dot confirm-host      bind this machine to the selected profile (before mutations)
   dot cd               print the repo path (cd "\$(dot cd)")
 EOF
 }
 
 case ${1:-help} in
-  install) cmd_install ;;
-  link) cmd_link ;;
-  unlink) cmd_unlink ;;
+  install) shift; cmd_install "$@" ;;
+  system-setup) shift; cmd_system_setup "$@" ;;
+  assets) shift; cmd_assets "$@" ;;
+  apps) shift; cmd_apps "$@" ;;
+  services) shift; cmd_services "$@" ;;
+  host-setup) shift; cmd_host_setup "$@" ;;
+  greeter) shift; cmd_greeter "$@" ;;
+  link) shift; cmd_link "$@" ;;
+  unlink) shift; cmd_unlink "$@" ;;
+  rollback) shift; cmd_rollback "$@" ;;
+  migrate-folded) shift; cmd_migrate_folded "$@" ;;
   status | st) cmd_status ;;
+  plan) shift; cmd_plan "$@" ;;
+  doctor) shift; cmd_doctor "$@" ;;
   diff | d) shift; cmd_diff "$@" ;;
-  save) shift; cmd_save "$*" ;;
-  pull | sync) cmd_pull ;;
+  save) shift; cmd_save "$@" ;;
+  pull | sync) shift; cmd_pull "$@" ;;
   add) shift; cmd_add "$@" ;;
   packages | pkgs) cmd_packages ;;
   install-packages) cmd_install_packages ;;
   optional | opt) shift; cmd_optional "$@" ;;
   new-host) shift; cmd_new_host "${1:-}" ;;
+  confirm-host) cmd_confirm_host ;;
   cd | path) echo "$DOT" ;;
   help | -h | --help) cmd_help ;;
   *) cmd_help; exit 1 ;;

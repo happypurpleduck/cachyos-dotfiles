@@ -28,6 +28,7 @@ ddcutil
 libqalculate
 jq
 python-gobject
+python-pillow
 
 # look
 inter-font
@@ -38,6 +39,7 @@ noto-fonts
 noto-fonts-cjk
 noto-fonts-emoji
 adw-gtk-theme
+adwaita-icon-theme
 qt5ct
 qt6ct
 qt6-wayland
@@ -81,6 +83,9 @@ zsh-theme-powerlevel10k
 fzf
 zoxide
 ripgrep
+eza
+bat
+fd
 lazygit
 neovim
 micro

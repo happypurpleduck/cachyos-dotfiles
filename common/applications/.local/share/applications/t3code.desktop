@@ -3,7 +3,7 @@ Type=Application
 Name=T3 Code
 GenericName=AI Coding Agent GUI
 Comment=T3 Code (nightly) — updates itself
-Exec=/home/husain/.local/opt/t3code/T3-Code.AppImage --password-store=gnome-libsecret %U
+Exec=t3code-launch %U
 Icon=t3code
 Terminal=false
 Categories=Development;IDE;
