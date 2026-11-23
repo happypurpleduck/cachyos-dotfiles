@@ -37,6 +37,10 @@ for relative in ("common", "seed", "hosts/_template"):
             continue
         content = data.decode("utf-8", errors="replace")
         for number, line in enumerate(content.splitlines(), 1):
+            # Documentation comments may show generic example paths such as
+            # /home/username/file; only executable configuration is a blocker.
+            if line.lstrip().startswith(("#", "//", "--")):
+                continue
             if hardcoded_home.search(line):
                 leaks.append(f"{path.relative_to(repo)}:{number}: {line[:160]}")
 
