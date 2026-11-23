@@ -28,6 +28,7 @@ ddcutil
 libqalculate
 jq
 python-gobject
+python-pillow
 
 # look
 inter-font
