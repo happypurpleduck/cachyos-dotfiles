@@ -177,12 +177,17 @@ def verify_after(target: Path, source: str | None) -> bool:
     return current_symlink_points_to(target, Path(source))
 
 
-def rollback(home: Path, host: str, txid: str, *, internal=False) -> None:
+def rollback(repo: Path, home: Path, host: str, txid: str, *, internal=False) -> None:
     if not re.fullmatch(r"\d{8}T\d{6}Z-[a-f0-9]{12}", txid):
         raise ValueError("invalid transaction id")
     txdir = tx_root(home) / txid
     journal_path = txdir / "journal.json"
     journal = read_json(journal_path)
+    if journal.get("kind") == "folded-migration":
+        runpy.run_path(str(repo / "scripts/migrate-folded.py"))["rollback_migration"](
+            repo, home, host, txid
+        )
+        return
     if not journal or journal.get("host") != host or journal.get("home") != str(home):
         raise ValueError(f"no applicable transaction: {txid}")
     if journal.get("status") == "rolled_back":
@@ -294,7 +299,7 @@ def apply(repo: Path, home: Path, host: str, *, backup_conflicts=False,
     except (OSError, ValueError) as exc:
         print(f"link failed: {exc}; attempting rollback", file=sys.stderr)
         try:
-            rollback(home, host, txid, internal=True)
+            rollback(repo, home, host, txid, internal=True)
         except (OSError, ValueError) as failure:
             print(
                 f"automatic rollback failed: {failure}; saved data in {directory}",
@@ -321,7 +326,7 @@ def main() -> int:
         # Guard every operation with the same host identity checks as planner.
         load_plan(repo, args.host)
         if args.rollback:
-            rollback(home, args.host, args.rollback)
+            rollback(repo, home, args.host, args.rollback)
             return 0
         return apply(
             repo, home, args.host, backup_conflicts=args.backup_conflicts,
