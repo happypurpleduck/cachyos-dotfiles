@@ -90,6 +90,31 @@ with tempfile.TemporaryDirectory() as tmp:
             assert (home / suffix).read_text() == f"{host} {app}"
             assert (home / f".config/{app}/{host}-only").is_symlink()
         assert (home / path).read_text() == "shared editor"
+    # The CLI must report effective links healthy (no stale Stow linked() call).
+    dot = repo / "common/bin/.local/bin/dot"
+    cli_env = {**os.environ, "HOME": str(home_a), "DOT_HOST": "A"}
+    cli_env.pop("DOTFILES", None)
+    def run_dot(*args: str, input_text: str | None = None):
+        result = subprocess.run([str(dot), *args], env=cli_env,
+                                input=input_text, capture_output=True, text=True)
+        assert result.returncode == 0, (args, result.stdout, result.stderr)
+        assert "command not found" not in result.stderr
+        return result
+
+    report = run_dot("status")
+    assert "all links ok" in report.stdout, report.stdout
+
+    # Seeds are copy-once and never overwrite an app-owned file, including
+    # subsequent relinks from an existing managed host.
+    add("seed/.config/waypaper/config.ini", "seed once")
+    run_dot("confirm-host", input_text="A\n")
+    run_dot("link")
+    seed = home_a / ".config/waypaper/config.ini"
+    assert seed.read_text() == "seed once"
+    seed.write_text("app edited")
+    run_dot("link")
+    assert seed.read_text() == "app edited"
+
     extra = home_a / ".config/editor/unrelated-user-data"
     extra.write_text("must survive")
 
@@ -116,6 +141,9 @@ with tempfile.TemporaryDirectory() as tmp:
     target = home_a / path
     target.unlink()
     target.write_text("new app-authored content")
+    changed_status = run_dot("status")
+    assert "replaced by an app" in changed_status.stdout
+    assert "command not found" not in changed_status.stderr
     invoke(home_a, "A", ok=False)
     result = invoke(home_a, "A", "--backup-conflicts")
     txid = re.search(r"dot rollback (\S+)", result.stdout).group(1)
