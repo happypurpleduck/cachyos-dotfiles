@@ -43,15 +43,33 @@ Then log out and back in from the greeter.
 ## Day to day
 
 ```sh
-dot status          # what changed, and any links an app replaced with a plain file
-dot save "message"  # commit + push (takes back app-replaced files first)
-dot pull            # get the other machines' changes and relink
-dot add <file>      # start tracking a file (shared); --host for this machine only
+dot status          # tracked changes and app-replaced managed links
+dot diff            # review tracked changes for common/ + this host
+dot save "message"  # commit tracked shared/current-host files, rebase and push
+dot pull            # fetch/rebase without stashing or creating new links
+dot add <file>      # add a file to the repo; --host for this machine only
 dot packages        # snapshot this machine's extra packages
 dot optional        # optional apps: --list, or `dot optional qbittorrent` to install one
 ```
 
-Edits made in `~/.config/...` go straight into the repo, since those files are links.
+Edits made in currently linked files go straight into the repo. By default, `dot
+save` stages **only edits/deletions of already tracked files** under `common/`
+and `hosts/<this-host>/`. It does not commit unrelated hosts, new untracked
+files or app-replaced files. Inspect `dot status` first. For intentional new
+files, stage the exact paths with `git -C "$(dot cd)" add -- PATH` and then
+run `dot save`. For deliberately staged maintenance or another host's files,
+use `dot save --allow-staged "message"`; do not use this for secrets or runtime
+state.
+
+If an application replaces a symlink with a regular file, `dot save` refuses
+to guess which repository copy should receive it. Inspect and back up that
+file, copy it to the intended source under `common/` or
+`hosts/<this-host>/home/`, then run `dot link` when ready. Rebase conflicts
+stop the sync without force pushing; follow Git's `rebase --continue` or
+`rebase --abort` guidance. `dot pull` does not automatically apply new
+links. **Existing symlinks still point into Git, so updating tracked files can
+change the active config immediately**; preflight/activation protections are
+being built separately in #6.
 
 ## Layout
 
