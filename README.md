@@ -5,6 +5,32 @@ with the accent picked from the wallpaper), plus the configs and scripts around
 it. Every machine I use syncs through this repo, and each one keeps its own
 machine-specific config here too.
 
+## Preflight: inspect before activating
+
+```sh
+dot doctor                 # inspect effective link targets and common dependencies
+dot doctor --json          # machine-readable preflight results
+dot doctor --strict        # nonzero when blockers or required packages are absent
+dot link --dry-run         # read-only link preview (does not link)
+dot install --dry-run      # read-only bootstrap preview (no sudo or pacman)
+./install --dry-run        # the same preview on a new checkout
+```
+
+The doctor reports `missing` links, already correct links, safe-looking
+managed target differences, foreign symlinks, ordinary files that would
+collide, and **folded-parent** directory symlinks left by earlier GNU Stow
+runs. A folded parent is deliberately treated as a blocker: automatically
+replacing that directory link risks losing access to app-generated files.
+The package inventory is read-only and uses the local pacman database when
+present; no package/asset/service installation is implied. Display-manager
+status is informational only. It does not touch /etc or the greeter.
+
+**Important:** this is a preflight-only increment. The existing `dot link`
+and non-preview `dot install` retain their old behavior until the
+transactional/linker follow-ups under #2 and #6 have been reviewed.
+Do not treat a successful preview as authorization to replace a
+working display manager or migrate folded links.
+
 ## New machine
 
 Install CachyOS (any desktop, or none), log in, then:
