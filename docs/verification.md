@@ -9,7 +9,7 @@
 | A | CachyOS existing graphical desktop | Existing SDDM/GDM | Distinct username A | desktop-a |
 | B | CachyOS minimal/CLI install | None initially | Distinct username B | minimal-b |
 
-Record ISO/date, kernel, architecture, session, selected display manager, VM snapshot, git SHA and redacted logs. Never record full machine-id, API keys or credentials.
+Set each VM hostname to desktop-a or minimal-b during CachyOS installation so its /etc/hostname matches its selected profile. Record ISO/date, kernel, architecture, session, selected display manager, VM snapshot, git SHA and redacted logs. Never record full machine-id, API keys or credentials.
 
 ## First-time host setup (repeat separately on A and B)
 
