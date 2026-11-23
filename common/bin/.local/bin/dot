@@ -91,7 +91,10 @@ backup_conflicts() {
 }
 
 cmd_link() {
-  if [ "${1:-}" = "--dry-run" ]; then cmd_doctor; return; fi
+  if [ "${1:-}" = "--dry-run" ]; then
+    cmd_doctor --strict
+    return
+  fi
   need stow stow
   local d
   backup_conflicts
@@ -378,7 +381,10 @@ cmd_install_packages() {
 }
 
 cmd_install() {
-  if [ "${1:-}" = "--dry-run" ]; then cmd_doctor; return; fi
+  if [ "${1:-}" = "--dry-run" ]; then
+    cmd_doctor --strict
+    return
+  fi
   [ -d "$HOSTDIR" ] || { warn "no hosts/$HOST yet"; read -r -p ":: create it from the template now? [Y/n] " a; [[ ${a,,} == n* ]] || cmd_new_host "$HOST"; }
   if [ -n "$(opt_groups)" ]; then
     say "optional apps (answers are saved in hosts/$HOST/optional.txt)"
