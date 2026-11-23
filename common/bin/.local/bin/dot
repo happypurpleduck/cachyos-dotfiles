@@ -616,7 +616,7 @@ case ${1:-help} in
   doctor) shift; cmd_doctor "$@" ;;
   diff | d) shift; cmd_diff "$@" ;;
   save) shift; cmd_save "$@" ;;
-  pull | sync) cmd_pull ;;
+  pull | sync) shift; cmd_pull "$@" ;;
   add) shift; cmd_add "$@" ;;
   packages | pkgs) cmd_packages ;;
   install-packages) cmd_install_packages ;;
