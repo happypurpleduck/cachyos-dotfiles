@@ -72,10 +72,45 @@ after migration. Never manually remove folded directory symlinks.
 `dot unlink` without a new link-state manifest still refuses to guess
 ownership; it does not automatically reverse a legacy Stow installation.
 
-System-level changes, startup/service activation, greeter migration and a
-full interrupted-install recovery path remain work in #6; the per-file
-transaction only covers managed links. Successful link application does not
-automatically reload Hyprland or restart Quickshell.
+### Installation checkpoints and recovery
+
+Regular `dot install` performs preflight before package changes or linking.
+It checks user-systemd/Hokum unit availability before the link transaction.
+Once links are applied, essential offline theme generation and user-service
+activation must succeed. If a later mandatory phase fails, the installer
+attempts to **roll back this installation's managed links** using the exact
+transaction ID, rather than leaving the HOME symlinks half-applied. Repeat
+`dot link` is now a precise no-op when the effective targets already match.
+The installer reports changed links and whether a recovery transaction exists.
+
+First-use files from `seed/` are **copied, never symlinked**, as part of the
+same verified home-file transaction as the managed links. Preflight rejects
+missing seed destinations below symlinked or blocked parent directories; existing
+seed destinations (including app-owned files) are left untouched. A rollback
+removes newly created seeds only if their contents remain unchanged, and refuses
+to delete any seed subsequently edited by an application or user. `dot unlink`
+intentionally leaves copy-once application state in place.
+
+Packages installed by pacman/AUR are **not automatically uninstalled**
+on failure; reversing those transactions or root-owned PAM backups requires
+separate user review. Optional assets may remain cached. A greeter is never
+implicitly staged, enabled or restarted.
+
+Arbitrary host scripts are also separate from routine installation:
+
+```sh
+dot host-setup             # preview selected host-specific executable path
+dot host-setup --apply     # explicitly authorize its execution
+```
+
+Inspect a host script before consenting. It may perform machine-specific
+actions that do not have a generic undo operation.
+
+Installed system packages, explicit host scripts and privileged system
+integration are still separate operations with their own recovery boundaries.
+The managed-home linker is transactionally restorable; there is no unsafe
+promise that all pacman or PAM operations can be rolled back automatically.
+Successful link application does not reload Hyprland or restart Quickshell.
 
 
 ### Optional assets, retries and failure recovery
@@ -95,6 +130,9 @@ dot assets --asset wallpapers --force      # refresh the wallpaper collection
 storage, validate ZIP members and expected content, then promote complete
 assets. Existing AppImages survive failed downloads. Directory replacements
 retain their previous version beside the new one as a `.previous-...` backup.
+The uosc and Anime4K multi-file installs carry versioned file-checksum manifests:
+missing, modified or partly deleted members are reported as not installed and
+can be repaired through a targeted retry. Existing files survive a failed update.
 The T3 Code nightly resolver refuses missing/invalid GitHub release metadata
 and only installs a plausible ELF AppImage. Anime4K is pinned to v4.0.1;
 other downloads deliberately track the upstream latest URLs, and the resolved
@@ -121,6 +159,15 @@ a manual migration. Mise's official installer validates its downloaded
 binary against upstream release checksums; Zed uses its own built-in
 automatic updater. `dot apps` deliberately does not silently update either
 application during `dot install` or Git synchronization.
+
+Installed-package discovery is **not** an installation manifest: `dot packages`
+prints repository and foreign/local packages outside declared requirements,
+without changing tracked host files. Foreign entries are not necessarily AUR
+packages. To replicate a chosen extra on this machine, explicitly review and
+edit `hosts/<host>/packages.txt` for official repository packages or
+`hosts/<host>/aur.txt` for reviewed, allowlisted AUR exceptions. Previously
+pacman-installed mise/Zed are reported for manual migration, never adopted into
+managed host requirements or silently replaced.
 
 On a new machine, first install the shared system dependencies, then use
 `dot apps install mise zed` to bootstrap the upstream binaries. You can do
@@ -189,9 +236,9 @@ Rollback checks that no one has edited the new greeter since activation,
 then restores previous assets, config and service selection.
 
 The former direct `install-greeter` script is disabled because it deleted
-working greeter assets before validation. A fake-root automated test verifies
-these steps; the real login path still requires a separate CachyOS VM test
-before considering installation readiness accepted.
+working greeter assets before validation. A fake-root automated test checks staging and recovery logic. The owner
+will verify the actual login path on their machine when adopting the configuration;
+no virtual-machine test is required for merging.
 
 ### Optional system services belong to the host
 
@@ -235,15 +282,19 @@ optional keyring units produce warnings. An existing polkit agent is never
 disabled without a verified replacement. Login-shell changes are offered
 only with explicit consent (or left to `chsh`).
 
-## Multi-machine acceptance and recovery
+## Owner verification on CachyOS
 
-The canonical scenario-by-scenario CachyOS VM test plan, including a graphical
-desktop VM, minimal/CLI VM, A/B concurrent editing, host overrides, asset
-failures, greeter recovery and transaction rollback, is in
-[docs/verification.md](docs/verification.md). Record real VM results using
-[docs/verification-result-template.md](docs/verification-result-template.md).
-CI tests use disposable homes, Git remotes and fake systemd roots; **they do
-not prove a fresh physical/VM CachyOS login works**.
+Automated checks exercise disposable homes, two independent Git clones,
+host-specific overrides, rollback, package policy and simulated system services.
+They cannot prove real desktop, login-manager or hardware behavior.
+
+The owner will adopt this configuration directly on their own machine and
+verify it there. **No VM matrix, recorded evidence or additional manual test
+is a prerequisite for merging.** Start with `dot doctor` and
+`dot install --dry-run`, review any blockers and backups, then apply.
+Greeter activation, privileged PAM changes, host scripts and Bluetooth changes
+remain separately opt-in. Verify the session and multi-machine sync in normal
+use; report any defects as GitHub issues.
 
 ## New machine
 
@@ -298,7 +349,7 @@ references a different user's wallpaper file.
 3. attempts optional assets: wallpapers, cursors, mpv scripts/shaders and T3 Code (failures are reported but do not block linking; Zed/mise are package-managed)
 4. links the effective per-host files transactionally (blocking existing collisions unless explicitly approved)
 5. **skips system-level changes by default**; pass `--apply-system` to opt into limited PAM/DDC setup
-6. configures user services and runs the host's `setup` if it has one
+6. verifies required user services and reports any host setup script; running that script is separately consented
 
 Keep the existing display manager. Check `dot doctor`, required services,
 theme generation, and shell startup before logging out or changing sessions.

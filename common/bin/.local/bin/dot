@@ -94,31 +94,32 @@ each_file() {
     python3 -c 'import json,sys; d=json.load(sys.stdin); [print(x["source"]+"\t"+x["target"]) for x in d["entries"]]'
 }
 
+# Verify a managed symlink resolves to the effective source.
+linked() {
+  [ -L "$2" ] || return 1
+  local actual expected
+  actual=$(realpath -- "$2" 2>/dev/null) || return 1
+  expected=$(realpath -- "$1" 2>/dev/null) || return 1
+  [ "$actual" = "$expected" ]
+}
+
 # Per-file owner-aware transactional linking replaces the unsafe "stow common
 # then stow host" overlay. Existing folded Stow directory symlinks must be
 # migrated separately; no app directory is flattened implicitly.
 cmd_link() {
   need python3 python
   if [ "${1:-}" = "--dry-run" ]; then
+    [ "$#" -eq 1 ] || die "usage: dot link [--dry-run|--backup-conflicts]"
     cmd_doctor --strict
-    python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" --home "$HOME" --dry-run
+    python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" \
+      --home "$HOME" --dry-run
     return
   fi
   check_host_identity
+  # The Python linker includes first-use seeds in the same verified transaction.
+  # Keep its exit status even when cmd_link runs inside an if/command substitution.
   python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" \
     --home "$HOME" "$@"
-  seed
-}
-# seed/: configs apps rewrite all the time (btop, waypaper, zed). Copied once, never linked.
-seed() {
-  [ -d "$DOT/seed" ] || return 0
-  (cd "$DOT/seed" && find . -type f) | sed 's|^\./||' | while read -r f; do
-    if [ ! -e "$HOME/$f" ] && [ ! -L "$HOME/$f" ]; then
-      mkdir -p "$HOME/$(dirname "$f")"
-      cp "$DOT/seed/$f" "$HOME/$f"
-      echo "   seeded ~/$f"
-    fi
-  done
 }
 
 cmd_unlink() {
@@ -141,15 +142,6 @@ cmd_rollback() {
   need python3 python
   python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" \
     --home "$HOME" --rollback "$1"
-}
-
-# Verify effective managed symlinks without Stow.
-linked() {
-  [ -L "$2" ] || return 1
-  local actual expected
-  actual=$(realpath -- "$2" 2>/dev/null) || return 1
-  expected=$(realpath -- "$1" 2>/dev/null) || return 1
-  [ "$actual" = "$expected" ]
 }
 
 # Some apps save by writing a new file and renaming it over the old one, which
@@ -180,6 +172,8 @@ cmd_status() {
     fi
     bad=1
   done < <(each_file)
+  if ! python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" \
+      --home "$HOME" --check-retired; then bad=1; fi
   [ $bad -eq 1 ] || echo "   all links ok"
 }
 
@@ -380,21 +374,26 @@ cmd_optional() {
 
 cmd_packages() {
   check_host_identity
+  need pacman pacman
   [ -d "$HOSTDIR" ] || die "no hosts/$HOST (dot new-host)"
-  local common aur
-  common=$( (pkglist "$DOT/packages/common.txt"; opt_pkgs) | sort -u)
-  aur=$( (pkglist "$DOT/packages/aur.txt"; opt_pkgs aur) | sort -u)
-  {
-    echo "# $HOST — explicitly installed repo packages beyond packages/common.txt and optional groups."
-    echo "# Snapshot from \`dot packages\` ($(date +%F)); edit freely."
-    comm -23 <(pacman -Qqen | sort -u) <(echo "$common")
-  } >"$HOSTDIR/packages.txt"
-  {
-    echo "# $HOST — AUR packages beyond packages/aur.txt (snapshot $(date +%F))."
-    comm -23 <(pacman -Qqem | sort -u) <(echo "$aur")
-  } >"$HOSTDIR/aur.txt"
-  say "updated hosts/$HOST/packages.txt and aur.txt"
-  git -C "$DOT" --no-pager diff --stat -- "hosts/$HOST"
+  local desired_repo desired_foreign native_extra foreign_extra
+  # Inspection is NOT adoption. Existing-machine packages may be historical,
+  # vendor self-managed, locally built, or irrelevant to another machine.
+  desired_repo=$( (pkglist "$DOT/packages/common.txt";
+                   pkglist "$HOSTDIR/packages.txt"; opt_pkgs) | sort -u)
+  desired_foreign=$( (pkglist "$DOT/packages/aur.txt";
+                      pkglist "$HOSTDIR/aur.txt"; opt_pkgs aur) | sort -u)
+  native_extra=$(comm -23 <(pacman -Qqen | sort -u) <(printf '%s\n' "$desired_repo" | sort -u))
+  foreign_extra=$(comm -23 <(pacman -Qqem | sort -u) <(printf '%s\n' "$desired_foreign" | sort -u))
+  say "read-only installed-package inventory for $HOST (NOT adopted into host manifests)"
+  printf '\n:: installed repository packages outside explicit dotfiles requirements:\n%s\n' "$native_extra"
+  printf '\n:: installed foreign/local packages outside explicit dotfiles requirements:\n%s\n' "$foreign_extra"
+  warn "Review each item before intentionally editing hosts/$HOST/packages.txt or aur.txt."
+  warn "Foreign/local packages are NOT automatically approved AUR dependencies."
+  if printf '%s\n%s\n' "$native_extra" "$foreign_extra" | grep -Eq '^(mise|zed)$'; then
+    warn "mise/Zed already package-managed: migrate manually before using upstream self-update."
+  fi
+  say "no tracked source files were modified; dot save cannot publish this inventory"
 }
 
 cmd_install_packages() {
@@ -459,95 +458,161 @@ cmd_system_setup() {
       "$DOT/system/setup" "$@"
       ;;
     --apply)
-      [ "$#" -eq 1 ] || die "usage: dot system-setup [--apply|--dry-run]"
+      [ "$#" -eq 1 ] || die "usage: dot system-setup [--apply]"
       check_host_identity
       sudo "$DOT/system/setup" --apply
       ;;
-    *) die "usage: dot system-setup [--apply|--dry-run]" ;;
+    *) die "usage: dot system-setup [--apply]" ;;
   esac
 }
+# Track only units initially disabled by this install.
+INSTALL_NEWLY_ENABLED=()
+enable_install_user_unit() {
+  local unit=$1
+  if systemctl --user is-enabled --quiet "$unit" >/dev/null 2>&1; then return 0; fi
+  INSTALL_NEWLY_ENABLED+=("$unit")
+  systemctl --user enable "$unit"
+}
+
+# If a later pre-login stage fails, undo the links from THIS install only.
+# Package-manager transactions and optional asset downloads are not reverted.
+install_recover() {
+  local txid=$1 failed_phase=$2
+  warn "installation stopped during: $failed_phase"
+  local i unit
+  for ((i=${#INSTALL_NEWLY_ENABLED[@]}-1; i>=0; i--)); do
+    unit=${INSTALL_NEWLY_ENABLED[i]}
+    if systemctl --user is-enabled --quiet "$unit" >/dev/null 2>&1; then
+      if systemctl --user disable "$unit"; then
+        warn "restored initially disabled user unit: $unit"
+      else
+        warn "FAILED to restore user unit $unit; disable it manually before reboot"
+      fi
+    fi
+  done
+  if [ -n "$txid" ]; then
+    if python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" \
+      --home "$HOME" --rollback "$txid"; then
+      warn "managed link changes restored; previous HOME files remain in backup"
+    else
+      warn "automatic link rollback failed; inspect journal for $txid before proceeding"
+    fi
+  fi
+  warn "installed pacman/AUR packages and optional downloads are NOT automatically removed"
+  warn "if --apply-system was used, restore PAM from its root-owned backup as instructed"
+  return 1
+}
+
+# Installation has explicit preflight and failure boundaries. It never runs a
+# host script or swaps a login manager automatically.
 cmd_install() {
   if [ "${1:-}" = "--dry-run" ]; then
+    [ "$#" -eq 1 ] || die "usage: dot install [--dry-run|--apply-system]"
     cmd_doctor --strict
     python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" --home "$HOME" --dry-run
     return
   fi
   check_host_identity
-  local apply_system=0 a
+  local apply_system=0 a link_output link_txid=""
+  INSTALL_NEWLY_ENABLED=()
   if [ "${1:-}" = "--apply-system" ]; then
+    [ "$#" -eq 1 ] || die "usage: dot install [--dry-run|--apply-system]"
     apply_system=1
   elif [ "$#" -ne 0 ]; then
     die "usage: dot install [--dry-run|--apply-system]"
   fi
-  if [ ! -d "$HOSTDIR" ]; then
-    warn "no hosts/$HOST yet"
-    read -r -p ":: create it from the template now? [Y/n] " a
-    [[ ${a,,} == n* ]] && die "create hosts/$HOST before installing"
-    cmd_new_host "$HOST"
-  fi
+  [ -d "$HOSTDIR/home" ] || die "create hosts/$HOST and run dot confirm-host first"
   if [ -n "$(opt_groups)" ]; then
-    say "optional apps (answers are saved in hosts/$HOST/optional.txt)"
+    say "optional package groups (host-owned choices)"
     cmd_optional_ask_only
   fi
-  # Package prerequisites must be verifiable even if no install is necessary.
-  python3 "$DOT/scripts/package-audit.py" --repo "$DOT" --host "$HOST" || die "package prerequisites failed"
-  # Avoid modifying the machine until the link plan is free of blockers.
+  python3 "$DOT/scripts/package-audit.py" --repo "$DOT" --host "$HOST" ||
+    die "package prerequisites unavailable"
   python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" \
-    --home "$HOME" --dry-run || die "link preflight failed; inspect dot doctor"
+    --home "$HOME" --dry-run || die "unsafe links; inspect dot doctor"
   cmd_install_packages
-  say "downloading assets (wallpapers, cursors, mpv scripts, apps)"
-  "$DOT/scripts/fetch-assets"
-  cmd_link
-  # Initialize Kitty, Hokum, Zsh and Hyprland theme outputs before any user
-  # services are enabled. Works from TTY, without Hyprland or internet.
-  python3 "$DOT/scripts/first-login.py" --home "$HOME" ||
-    die "first-login theme initialization failed; services were not enabled"
-  if [ "$apply_system" -eq 1 ]; then
-    say "applying explicitly requested limited system setup (sudo)"
-    sudo "$DOT/system/setup" --apply
-  else
-    say "system changes skipped; preview: dot system-setup (apply: dot system-setup --apply)"
+  say "attempting optional assets (independent of core config)"
+  "$DOT/scripts/fetch-assets" || warn "optional asset downloader failed; solid wallpaper fallback remains"
+  # Fail BEFORE linking if the user manager or required notifier is missing.
+  if ! systemctl --user daemon-reload; then
+    die "user systemd manager unavailable; log into a user session before install"
   fi
-  say "host-selected system services (read-only; never enabled implicitly)"
-  python3 "$DOT/scripts/host-services.py" --repo "$DOT" --host "$HOST" ||
-    warn "host system services need attention; use dot services --apply explicitly"
-  say "user services"
-  systemctl --user daemon-reload || die "user systemd manager unavailable; log into a user session before installing services"
-  if systemctl --user cat hokum.service >/dev/null 2>&1; then
-    systemctl --user enable hokum.service || die "failed to enable hokum notifications"
-  else
-    die "required hokum.service is missing; install hokum-bin before enabling notifications"
+  if ! systemctl --user cat hokum.service >/dev/null 2>&1; then
+    die "required hokum.service unit missing after installing prerequisites"
+  fi
+  if ! link_output=$(cmd_link); then
+    die "managed link transaction failed; inspect its rollback journal"
+  fi
+  printf "%s\n" "$link_output"
+  link_txid=$(printf "%s\n" "$link_output" | awk '/rollback with: dot rollback / {print $NF}' | tail -n1)
+  say "generating essential first-login themes offline"
+  if ! python3 "$DOT/scripts/first-login.py" --home "$HOME"; then
+    install_recover "$link_txid" "offline theme generation"
+    return 1
+  fi
+  if ! fc-cache -f >/dev/null; then
+    install_recover "$link_txid" "font cache"
+    return 1
+  fi
+  if ! enable_install_user_unit hokum.service; then
+    install_recover "$link_txid" "Hokum user service enablement"
+    return 1
   fi
   if systemctl --user cat gnome-keyring-daemon.socket >/dev/null 2>&1; then
-    systemctl --user enable gnome-keyring-daemon.socket || warn "could not enable optional keyring socket"
+    enable_install_user_unit gnome-keyring-daemon.socket ||
+      warn "optional keyring socket could not be enabled"
   else
-    warn "optional gnome-keyring-daemon.socket not found; keeping existing keyring configuration"
+    warn "optional gnome-keyring-daemon.socket unavailable"
   fi
-  # Shell selection is personal to each host; never silently change it.
-  if command -v zsh >/dev/null && [ "$(getent passwd "$(id -un)" | cut -d: -f7)" != "$(command -v zsh)" ]; then
+  say "host-selected SYSTEM services (read-only; opt-in separately)"
+  python3 "$DOT/scripts/host-services.py" --repo "$DOT" --host "$HOST" ||
+    warn "host system services need attention; use dot services --apply"
+  if [ "$apply_system" -eq 1 ]; then
+    say "explicitly applying limited PAM/DDC setup (sudo)"
+    if ! sudo "$DOT/system/setup" --apply; then
+      install_recover "$link_txid" "limited PAM/DDC system integration"
+      return 1
+    fi
+  else
+    say "system files and login manager left unchanged; dot system-setup previews"
+  fi
+  # Never run an arbitrary host-specific setup script during routine install.
+  if [ -x "$HOSTDIR/setup" ]; then
+    warn "host-specific setup remains unapplied; review with dot host-setup"
+  fi
+  if command -v zsh >/dev/null &&
+     [ "$(getent passwd "$(id -un)" | cut -d: -f7)" != "$(command -v zsh)" ]; then
     if [ -t 0 ]; then
-      read -r -p ":: switch your login shell to zsh? [y/N] " answer
-      if [[ ${answer,,} == y* ]]; then
-        chsh -s "$(command -v zsh)" || die "could not change login shell"
-      else
-        warn "keeping existing login shell"
+      read -r -p ":: switch login shell to zsh? [y/N] " a
+      if [[ ${a,,} == y* ]]; then
+        chsh -s "$(command -v zsh)" || warn "shell change failed; adjust manually"
       fi
     else
-      warn "login shell is not zsh; run chsh -s $(command -v zsh) manually if desired"
+      warn "login shell unchanged; optionally run chsh -s $(command -v zsh)"
     fi
   fi
-  # Do not disable another polkit agent without a confirmed replacement.
-  fc-cache -f >/dev/null
-  if [ -x "$HOSTDIR/setup" ]; then
-    say "hosts/$HOST/setup"
-    "$HOSTDIR/setup"
-  fi
   if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
-    say "refreshing active wallpaper and theme"
-    ~/.config/quickshell/scripts/mocha-theme restore ||
-      warn "could not refresh active theme; generated theme files are present"
+    "$HOME/.config/quickshell/scripts/mocha-theme" restore ||
+      warn "active wallpaper refresh failed; generated theme files remain"
   fi
-  say "done. Review services and login manager before logging out; greeter is unchanged."
+  say "install complete: managed links and themes ready; no greeter replacement"
+  say "recovery link transaction: ${link_txid:-none (no changes)}"
+}
+
+# Host-specific executable setup scripts must be reviewed and explicitly run.
+cmd_host_setup() {
+  check_host_identity
+  [ -x "$HOSTDIR/setup" ] || { say "no host setup script selected"; return 0; }
+  say "host setup script: $HOSTDIR/setup"
+  if [ "${1:-}" != "--apply" ]; then
+    say "PREVIEW ONLY; inspect its source, then dot host-setup --apply"
+    return 0
+  fi
+  [ "$#" -eq 1 ] || die "usage: dot host-setup [--apply]"
+  local consent
+  read -r -p "Type RUN HOST SETUP to execute the selected script: " consent
+  [ "$consent" = "RUN HOST SETUP" ] || die "host setup not authorized"
+  "$HOSTDIR/setup"
 }
 
 # record answers for unasked groups without installing (install happens right after)
@@ -563,7 +628,8 @@ cmd_optional_ask_only() {
 cmd_new_host() {
   [ "$#" -le 1 ] || die "usage: dot new-host [name]"
   local name=${1:-$HOST}
-  [[ "$name" =~ ^[[:alnum:]][[:alnum:]_.-]*$ ]] || die "invalid hostname: $name"
+  [[ "$name" =~ ^[[:alnum:]][[:alnum:]_.-]*$ ]] ||
+    die "invalid hostname: $name"
   case "$name" in .|..|_template) die "cannot create reserved host: $name" ;; esac
   [ -e "$DOT/hosts/$name" ] && die "hosts/$name already exists"
   cp -r "$DOT/hosts/_template" "$DOT/hosts/$name"
@@ -571,7 +637,7 @@ cmd_new_host() {
   say "created hosts/$name — edit its host.lua (monitors: hyprctl monitors) and host.json, then: dot link"
 }
 
-# dot add [--host] <path>… — move files into the repo and link them back.
+# dot add [--host] <path>… — preview and copy files; never move HOME files.
 #   common package = first directory under ~/.config (or the file name for dotfiles in ~)
 # Safe import: preview by default; a copy does not publish or relink.
 cmd_add() {
@@ -597,6 +663,7 @@ dot — $DOT on $HOST
   dot install --apply-system  explicitly include limited PAM/DDC system setup
   dot system-setup [--apply]  preview or apply limited PAM/DDC setup
   dot greeter [--stage|--activate|--rollback TXID]  safe login-manager control
+  dot host-setup [--apply]    preview or explicitly run this host's setup script
   dot services                read-only host system service (Bluetooth) status
   dot services --apply --confirm 'ENABLE HOST SERVICES'  explicit activation
   dot apps status             first-party mise/Zed install type and update policy
@@ -621,7 +688,7 @@ dot — $DOT on $HOST
   dot pull --apply     apply a reviewed preflight-passing remote revision
   dot add [--host] F…  preview safe app config copy (never moves HOME)
   dot add --apply [--host] F…  copy reviewed config; link and stage separately
-  dot packages         snapshot this machine's extra packages into hosts/$HOST
+  dot packages         inspect installed extras; manually choose managed host packages
   dot optional [grp…]  optional apps: ask about new groups, or install the named ones
                        (--list shows them, --ask asks about all of them again)
   dot new-host [name]  start hosts/<name> from hosts/_template
@@ -636,6 +703,7 @@ case ${1:-help} in
   assets) shift; cmd_assets "$@" ;;
   apps) shift; cmd_apps "$@" ;;
   services) shift; cmd_services "$@" ;;
+  host-setup) shift; cmd_host_setup "$@" ;;
   greeter) shift; cmd_greeter "$@" ;;
   link) shift; cmd_link "$@" ;;
   unlink) shift; cmd_unlink "$@" ;;

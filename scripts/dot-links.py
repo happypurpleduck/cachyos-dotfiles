@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import json
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -83,6 +84,61 @@ def current_symlink_points_to(target: Path, source: Path) -> bool:
     )
 
 
+def inspect_seeds(repo: Path, home: Path, managed: set[str]):
+    """Copy-once sources share the link transaction; never follow HOME parents."""
+    seed_root = repo / "seed"
+    actions: list[dict] = []
+    blockers: list[str] = []
+    records: list[dict] = []
+    if not seed_root.is_dir():
+        return actions, blockers, records
+    for source in sorted(seed_root.rglob("*")):
+        relative = source.relative_to(seed_root)
+        if source.is_symlink():
+            blockers.append(f"seed/{relative}: symlink source not permitted")
+            continue
+        if not source.is_file():
+            continue
+        rel = relative.as_posix()
+        target = home / relative
+        if rel in managed:
+            blockers.append(f"seed/{rel}: also owned by the common/host linker")
+            continue
+        if lexists(target):
+            # App-owned files and symlinks are not adopted or overwritten.
+            records.append({"path": rel, "status": "existing"})
+            continue
+        try:
+            verify_no_parent_symlinks(home, target)
+        except ValueError as exc:
+            blockers.append(f"seed/{rel}: {exc}")
+            records.append({"path": rel, "status": "blocked"})
+            continue
+        records.append({"path": rel, "status": "missing"})
+        actions.append({
+            "path": rel, "source": str(source), "operation": "seed",
+            "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+            "before_exists": False,
+        })
+    return actions, blockers, records
+
+
+def retired_links(repo: Path, home: Path, host: str) -> list[dict]:
+    """Reveal previous managed targets which are no longer in the effective plan."""
+    planned = {entry.path for entry in load_plan(repo, host)}
+    state = read_json(state_path(home, host), {"entries": {}})
+    entries = state.get("entries", {})
+    if not isinstance(entries, dict):
+        raise ValueError("invalid stored link manifest")
+    return [
+        {"path": path,
+         "status": "retired-link" if current_symlink_points_to(home / path, Path(source))
+         else "retired-user-change"}
+        for path, source in sorted(entries.items())
+        if path not in planned and lexists(home / path)
+    ]
+
+
 def inspect(repo: Path, home: Path, host: str, backup_conflicts: bool, unlink: bool):
     if not (repo / "hosts" / host / "home").is_dir():
         raise ValueError(f"no hosts/{host}/home; run dot new-host first")
@@ -151,6 +207,10 @@ def inspect(repo: Path, home: Path, host: str, backup_conflicts: bool, unlink: b
             "path": path, "source": None,
             "operation": "unlink", "before_exists": True,
         })
+    if not unlink:
+        seed_actions, seed_blockers, _ = inspect_seeds(repo, home, set(desired))
+        actions.extend(seed_actions)
+        blockers.extend(seed_blockers)
     return desired, old, actions, blockers
 
 
@@ -171,10 +231,13 @@ def make_parents(home: Path, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
 
 
-def verify_after(target: Path, source: str | None) -> bool:
-    if source is None:
+def verify_after(target: Path, action: dict) -> bool:
+    if action["operation"] == "seed":
+        return (target.is_file() and not target.is_symlink()
+                and hashlib.sha256(target.read_bytes()).hexdigest() == action["sha256"])
+    if action["source"] is None:
         return not lexists(target)
-    return current_symlink_points_to(target, Path(source))
+    return current_symlink_points_to(target, Path(action["source"]))
 
 
 def rollback(repo: Path, home: Path, host: str, txid: str, *, internal=False) -> None:
@@ -210,7 +273,7 @@ def rollback(repo: Path, home: Path, host: str, txid: str, *, internal=False) ->
         backup = txdir / "saved" / action["path"]
         if not lexists(backup) and action["before_exists"]:
             continue  # operation never reached the backup step
-        if lexists(target) and not verify_after(target, action["source"]):
+        if lexists(target) and not verify_after(target, action):
             raise ValueError(f"target edited since apply, refusing rollback: {target}")
 
     for action in reversed(operations):
@@ -260,6 +323,10 @@ def apply(repo: Path, home: Path, host: str, *, backup_conflicts=False,
     if dry_run:
         print("Dry run: no files changed")
         return 0
+    # No journal, backup or manifest write for an already consistent host.
+    if not actions and old == desired and state_path(home, host).is_file():
+        print("Already linked: 0 changes; no-op")
+        return 0
 
     prior = state_path(home, host)
     verify_no_parent_symlinks(home, prior)
@@ -287,9 +354,27 @@ def apply(repo: Path, home: Path, host: str, *, backup_conflicts=False,
                 os.replace(target, backup)
             if action["source"] is not None:
                 source = Path(action["source"])
-                if not source.exists() and not source.is_symlink():
-                    raise ValueError(f"source disappeared before apply: {source}")
-                os.symlink(os.path.relpath(source, target.parent), target)
+                if not source.is_file() or source.is_symlink():
+                    raise ValueError(f"source missing/unsafe before apply: {source}")
+                if action["operation"] == "seed":
+                    if lexists(target):
+                        raise ValueError(f"seed destination appeared before copy: {target}")
+                    payload = source.read_bytes()
+                    if hashlib.sha256(payload).hexdigest() != action["sha256"]:
+                        raise ValueError(f"seed source changed before copy: {source}")
+                    fd, temp = tempfile.mkstemp(prefix=".dot-seed-", dir=target.parent)
+                    try:
+                        with os.fdopen(fd, "wb") as output:
+                            output.write(payload)
+                            output.flush()
+                            os.fsync(output.fileno())
+                        os.chmod(temp, source.stat().st_mode & 0o777)
+                        os.replace(temp, target)
+                    finally:
+                        if os.path.lexists(temp):
+                            os.unlink(temp)
+                else:
+                    os.symlink(os.path.relpath(source, target.parent), target)
         write_json(prior, {
             "version": 1, "repo": str(repo), "host": host,
             "last_transaction": txid, "entries": desired,
@@ -319,12 +404,18 @@ def main() -> int:
     parser.add_argument("--unlink", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--rollback", metavar="TXID")
+    parser.add_argument("--check-retired", action="store_true")
     args = parser.parse_args()
     try:
         repo = args.repo.resolve(strict=True)
         home = args.home.expanduser().resolve(strict=True)
         # Guard every operation with the same host identity checks as planner.
         load_plan(repo, args.host)
+        if args.check_retired:
+            retired = retired_links(repo, home, args.host)
+            for entry in retired:
+                print(f"  {entry['status']}: ~/{entry['path']} (run dot link)")
+            return 1 if retired else 0
         if args.rollback:
             rollback(repo, home, args.host, args.rollback)
             return 0

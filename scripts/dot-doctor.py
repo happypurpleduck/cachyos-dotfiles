@@ -101,8 +101,18 @@ def report(repo: Path, home: Path, host: str) -> dict:
         str(display_link.resolve(strict=False)) if display_link.is_symlink()
         else "not detected"
     )
+    linker = repo / "scripts/dot-links.py"
+    seed_actions, seed_blockers, seed_records = (
+        runpy.run_path(str(linker))["inspect_seeds"](
+            repo, home, {e.path for e in entries})
+        if linker.is_file() else ([], [], [])
+    )
+    stale = (runpy.run_path(str(linker))["retired_links"](repo, home, host)
+             if linker.is_file() else [])
     return {
         "repo": str(repo), "home": str(home), "host": host,
+        "seeds": seed_records, "seed_blockers": seed_blockers,
+        "retired_links": stale,
         "targets": records, "counts": counts,
         "blocking_targets": [
             e for e in records if e["status"] not in {"ok", "missing", "managed-different"}
@@ -179,10 +189,17 @@ def main() -> int:
         print("  system: existing display manager "
               f"{data['system_changes']['display_manager']} (unchanged)")
         print("  dry run only: no links, packages, services, backups, or /etc modifications")
+        if data["retired_links"]:
+            for item in data["retired_links"]:
+                print(f"  !! {item['status']}: {item['path']} (dot link to retire)")
+        if data["seeds"]:
+            print("  first-use seeds missing: " + str(sum(x["status"] == "missing" for x in data["seeds"])))
+        for item in data["seed_blockers"]:
+            print("  BLOCKED seed: " + item)
         if data["blocking_targets"]:
             print("  BLOCKED: resolve collisions and folded/foreign parent links before apply")
 
-    if args.strict and (data["blocking_targets"] or data["packages"]["missing"]
+    if args.strict and (data["seed_blockers"] or data["blocking_targets"] or data["packages"]["missing"]
                         or data["packages"]["blocking"]
                         or data["host_services"]["blocking"]):
         return 1
