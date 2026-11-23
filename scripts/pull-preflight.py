@@ -30,9 +30,10 @@ def active_path(path: str, host: str) -> bool:
     return (
         path.startswith("common/")
         or path.startswith(f"hosts/{host}/home/")
-        or path.startswith(f"hosts/{host}/packages.txt")
-        or path.startswith(f"hosts/{host}/aur.txt")
-        or path.startswith(f"hosts/{host}/optional.txt")
+        # All selected-host control files are active, including services.txt,
+        # setup and any future machine-specific policy/scripts.
+        or (path.startswith(f"hosts/{host}/")
+            and not path.startswith(f"hosts/{host}/home/"))
         or path.startswith("packages/")
         or path.startswith("system/")
         or path.startswith("scripts/")
