@@ -100,11 +100,33 @@ and only installs a plausible ELF AppImage. Anime4K is pinned to v4.0.1;
 other downloads deliberately track the upstream latest URLs, and the resolved
 T3 release/tag is stored under `~/.local/opt/t3code/.version.json`.
 
-Zed and mise do **not** run remote `curl | sh` installers anymore.
-Install them via `dot optional zed` and `dot optional mise` (official
-repository packages). If they are absent, startup and shell initialization
-continue without them; mise tool installation is optional. `dot doctor`
-lists all remaining optional asset gaps.
+Zed and mise are **not** pacman/AUR packages in this project.
+Their **official upstream user-local installers** manage the binary and its
+subsequent updates. Install them explicitly when desired:
+
+```sh
+dot apps status               # read-only: self-managed / externally managed / missing
+dot apps install mise zed     # opt in to the two official first-party installers
+dot apps update mise          # runs mise self-update --yes --no-plugins
+dot apps update zed           # reminder: Zed auto-updates on restart
+```
+
+`dot apps install` downloads and executes a script from the official
+`https://mise.run` or `https://zed.dev/install.sh` endpoint **only after
+you explicitly invoke the install command**. It rejects non-HTTPS or unexpected
+redirect domains, prints the script SHA256, and never uses sudo. Do not mix
+a pacman-managed `mise` or `zed` executable with upstream self-update:
+the command refuses an already detected external installation and asks for
+a manual migration. Mise's official installer validates its downloaded
+binary against upstream release checksums; Zed uses its own built-in
+automatic updater. `dot apps` deliberately does not silently update either
+application during `dot install` or Git synchronization.
+
+On a new machine, first install the shared system dependencies, then use
+`dot apps install mise zed` to bootstrap the upstream binaries. You can do
+this independently after login; missing either app must not break Zsh or
+first-login. `dot doctor` reports missing or externally managed upstream
+apps separately from optional asset downloads.
 
 ### Initial theme and session readiness
 
@@ -176,6 +198,12 @@ before considering installation readiness accepted.
 The installer audits the selected host's declared pacman and AUR requirements
 **before running either package manager**. `python3 scripts/package-audit.py
 --repo "$(dot cd)" --host "$(hostname)"` is a read-only standalone check.
+AUR usage is restricted to explicitly documented exceptions in
+`packages/aur-exceptions.json`: `hokum-bin` as the core notification
+service, and host-selected `google-chrome` for Chrome. No other AUR
+package may be introduced without a separate review and policy update.
+An AUR installer is never invoked unattended; the installer displays
+the pending exceptions and requires typing `APPROVE AUR` before proceeding.
 A missing mandatory AUR package without an installed `paru` or `yay`
 blocks installation with an actionable message. An unavailable repo package
 also blocks rather than silently continuing. Install an AUR helper from the
