@@ -286,6 +286,13 @@ optional keyring units produce warnings. An existing polkit agent is never
 disabled without a verified replacement. Login-shell changes are offered
 only with explicit consent (or left to `chsh`).
 
+The optional T3 Code nightly asset is fetched directly from the upstream
+GitHub release API with JSON media negotiation, then selects and verifies the
+AppImage for the current CPU architecture (x86-64 or ARM64). If a previous
+attempt failed, retry just this asset with
+`./scripts/fetch-assets --asset t3code`; it does not require reinstalling
+packages or relinking the desktop configuration.
+
 ## Owner verification on CachyOS
 
 Automated checks exercise disposable homes, two independent Git clones,

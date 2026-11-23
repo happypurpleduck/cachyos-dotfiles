@@ -4,6 +4,7 @@ from importlib.machinery import SourceFileLoader
 from importlib.util import module_from_spec, spec_from_loader
 from io import BytesIO
 import json
+from urllib.request import Request
 import os
 from pathlib import Path
 import subprocess
@@ -64,15 +65,68 @@ with tempfile.TemporaryDirectory() as temporary:
     assert len(backups) == 1
     assert (backups[0] / "generated").read_text() == "keep old"
 
-    assert asset.nightly_asset([{
-        "prerelease": True, "tag_name": "nightly-2026-11-23",
-        "assets": [{
-            "name": "T3-Code.AppImage",
-            "browser_download_url":
-                "https://github.com/pingdotgg/t3code/releases/download/"
-                "nightly-2026-11-23/T3-Code.AppImage",
-        }],
-    }])[0] == "nightly-2026-11-23"
+    # The GitHub Releases JSON API must be requested as JSON, not binary.
+    # A binary Accept header causes an HTTP 415 on some API responses.
+    old_urlopen = asset.urlopen
+    observed = []
+    def fake_urlopen(request: Request, *, timeout):
+        observed.append((request.full_url, request.get_header("Accept")))
+        return BytesIO(b"x" * 48)
+    try:
+        asset.urlopen = fake_urlopen
+        assert len(asset.download(asset.NIGHTLIES, 1024, attempts=1)) == 48
+        assert len(asset.download("https://github.com/example/data.zip", 1024, attempts=1)) == 48
+        assert observed == [
+            (asset.NIGHTLIES, "application/vnd.github+json"),
+            ("https://github.com/example/data.zip", "application/octet-stream"),
+        ]
+    finally:
+        asset.urlopen = old_urlopen
+
+    # Releases publish both architectures; x86_64 must never select ARM64.
+    tag = "v0.1.12-nightly.20261123.5138"
+    url_base = f"https://github.com/pingdotgg/t3code/releases/download/{tag}/"
+    releases = [{
+        "prerelease": True, "tag_name": tag,
+        "assets": [
+            {"name": "T3-Code-Nightly-arm64.AppImage",
+             "browser_download_url": url_base + "T3-Code-Nightly-arm64.AppImage"},
+            {"name": "T3-Code-Nightly-x86_64.AppImage",
+             "browser_download_url": url_base + "T3-Code-Nightly-x86_64.AppImage"},
+        ],
+    }]
+    assert asset.nightly_asset(releases, "x86_64") == (
+        tag, url_base + "T3-Code-Nightly-x86_64.AppImage")
+    assert asset.nightly_asset(releases, "aarch64") == (
+        tag, url_base + "T3-Code-Nightly-arm64.AppImage")
+    for unsupported in ("i686", "riscv64"):
+        try:
+            asset.nightly_asset(releases, unsupported)
+            assert False, "unsupported CPU architecture was accepted"
+        except ValueError:
+            pass
+    for machine, wrong in (("x86_64", "arm64"), ("aarch64", "x86_64")):
+        try:
+            asset.nightly_asset([{"prerelease": True, "tag_name": tag,
+                                 "assets": [releases[0]["assets"][0 if wrong == "arm64" else 1]]}], machine)
+            assert False, "wrong architecture was accepted"
+        except ValueError:
+            pass
+
+    # Check ELF CPU target, not only the four-byte magic.
+    def fake_elf(machine_id: int) -> bytes:
+        data = bytearray(128 * 1024)
+        data[:4] = b"\x7fELF"
+        data[4:6] = b"\x02\x01"
+        data[18:20] = machine_id.to_bytes(2, "little")
+        return bytes(data)
+    asset.validate_appimage(fake_elf(62), "x86_64")
+    asset.validate_appimage(fake_elf(183), "aarch64")
+    try:
+        asset.validate_appimage(fake_elf(183), "x86_64")
+        assert False, "ARM64 ELF accepted on x86_64"
+    except ValueError:
+        pass
     for bad in ([], {"message": "API rate limit exceeded"}):
         try:
             asset.nightly_asset(bad)
@@ -82,15 +136,8 @@ with tempfile.TemporaryDirectory() as temporary:
 
     old_download = asset.download
     asset.download = lambda url, *args, **kwargs: (
-        json.dumps([{
-            "prerelease": True, "tag_name": "nightly-2026-11-23",
-            "assets": [{
-                "name": "T3-Code.AppImage",
-                "browser_download_url":
-                    "https://github.com/pingdotgg/t3code/releases/download/"
-                    "nightly-2026-11-23/T3-Code.AppImage",
-            }],
-        }]).encode() if "api.github.com" in url else b"HTML error response"
+        json.dumps(releases).encode() if "api.github.com" in url
+        else b"HTML error response"
     )
     try:
         asset.install_t3code(home)
