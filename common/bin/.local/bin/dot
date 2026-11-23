@@ -142,7 +142,7 @@ cmd_status() {
   while IFS=$'\t' read -r src dst; do
     if linked "$src" "$dst"; then continue; fi
     if [ -f "$dst" ] && [ ! -L "$dst" ]; then
-      echo "   replaced by an app (dot save takes it back): ~/${dst#"$HOME"/}"
+      echo "   replaced by an app (not auto-published): ~/${dst#"$HOME"/}"
     else
       echo "   not linked (dot link): ~/${dst#"$HOME"/}"
     fi
@@ -151,48 +151,117 @@ cmd_status() {
   [ $bad -eq 1 ] || echo "   all links ok"
 }
 
-# dot diff [--stat] [path…] — everything `dot save` would commit:
-#   1. changes in the repo (edits through the links, new and deleted files)
-#   2. files an app replaced with a plain copy (shown against the repo version)
-# Paths filter part 1 (repo paths, e.g. `dot diff common/hypr`).
+# Common files are shared, but a normal save may only publish tracked changes
+# in common/ and the currently selected host. Newly added files require explicit
+# 'git add'; already staged foreign changes require --allow-staged.
+owned_path() {
+  case "$1" in
+    common/* | "hosts/$HOST/"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+check_foreign_unstaged() {
+  local f bad=0
+  while IFS= read -r f; do
+    if ! owned_path "$f"; then
+      warn "not owned by $HOST: $f (not staged or committed)"
+      bad=1
+    fi
+  done < <(git -C "$DOT" diff --name-only)
+  [ "$bad" -eq 0 ] || die "other-host or repository maintenance edits are present; commit them explicitly with git before using dot save"
+}
+
+check_staged_scope() {
+  local f bad=0
+  while IFS= read -r f; do
+    if ! owned_path "$f"; then
+      warn "already staged outside this host's scope: $f"
+      bad=1
+    fi
+  done < <(git -C "$DOT" diff --cached --name-only)
+  [ "$bad" -eq 0 ] || die "use git to unstage these paths, or explicitly run dot save --allow-staged MESSAGE"
+}
+
+check_replaced_links() {
+  local src dst bad=0
+  while IFS=$'\t' read -r src dst; do
+    if [ -f "$dst" ] && [ ! -L "$dst" ] && ! linked "$src" "$dst"; then
+      warn "app replaced managed link: ~/${dst#"$HOME"/} (source: ${src#"$DOT"/})"
+      bad=1
+    fi
+  done < <(each_file)
+  [ "$bad" -eq 0 ] || die "not absorbing app files automatically: inspect and back up the replacements before explicitly copying them to the intended common/ or hosts/$HOST/ source"
+}
+
+# dot diff [--stat] [repo paths…] — tracked changes in common + this host,
+# plus local app replacements. Untracked files are intentionally excluded:
+# a normal dot save will not commit them.
 cmd_diff() {
-  local stat=() src dst f color=never
+  local stat=() src dst color=never
   [ "${1:-}" = "--stat" ] && { stat=(--stat); shift; }
   [ -t 1 ] && color=always
+  local paths=("$@")
+  if [ "${#paths[@]}" -eq 0 ]; then
+    paths=(common)
+    has_host && paths+=("hosts/$HOST")
+  fi
   {
-    git -C "$DOT" --no-pager diff --color=$color "${stat[@]}" HEAD -- "$@"
-    # untracked files aren't in `git diff`; show them as new
-    git -C "$DOT" ls-files --others --exclude-standard -- "$@" | while read -r f; do
-      git -C "$DOT" --no-pager diff --color=$color "${stat[@]}" --no-index /dev/null "$f" || true
-    done
+    git -C "$DOT" --no-pager diff --color="$color" "${stat[@]}" HEAD -- "${paths[@]}"
     [ $# -eq 0 ] || exit 0
     while IFS=$'\t' read -r src dst; do
       if [ -f "$dst" ] && [ ! -L "$dst" ] && ! linked "$src" "$dst"; then
-        printf '\n\033[1;33m## replaced by an app: ~/%s (dot save copies it into the repo)\033[0m\n' "${dst#"$HOME"/}"
-        git --no-pager diff --color=$color "${stat[@]}" --no-index "$src" "$dst" || true
+        printf '\n## app-replaced link (not auto-published): ~/%s\n' "${dst#"$HOME"/}"
+        git --no-pager diff --color="$color" "${stat[@]}" --no-index "$src" "$dst" || true
       fi
     done < <(each_file)
   } | if [ -t 1 ]; then less -RFX; else cat; fi
 }
 
 cmd_save() {
-  local msg=${1:-"$HOST: update"}
-  absorb
-  git -C "$DOT" add -A
+  local allow_staged=0
+  if [ "${1:-}" = "--allow-staged" ]; then
+    allow_staged=1
+    shift
+  fi
+  local msg=${*:-"$HOST: update"}
+
+  check_replaced_links
+  check_foreign_unstaged
+  if [ "$allow_staged" -eq 0 ]; then check_staged_scope; fi
+
+  # add -u never stages untracked files, and never stages other hosts' files.
+  git -C "$DOT" add -u -- common
+  if has_host; then git -C "$DOT" add -u -- "hosts/$HOST"; fi
+
   if git -C "$DOT" diff --cached --quiet; then
     say "nothing to commit"
   else
-    git -C "$DOT" commit -q -m "$msg" && say "committed: $msg"
+    git -C "$DOT" commit -m "$msg" && say "committed: $msg"
   fi
-  git -C "$DOT" pull -q --rebase --autostash
-  git -C "$DOT" push -q && say "pushed"
-  cmd_link >/dev/null
+
+  # Rebase only after a local commit; no autostash or force push.
+  if ! git -C "$DOT" pull --rebase; then
+    warn "sync stopped. Resolve conflicts with 'git -C "$DOT" rebase --continue',"
+    warn "or preserve your work and abort with 'git -C "$DOT" rebase --abort'. Nothing was force-pushed."
+    return 1
+  fi
+  git -C "$DOT" push
+  say "pushed; new files are not automatically linked (run dot link after checking host prerequisites)"
 }
 
 cmd_pull() {
-  git -C "$DOT" pull --rebase --autostash
-  cmd_link
-  say "restart the shell with: pkill -x quickshell; pkill -x qs; hyprctl dispatch 'hl.dsp.exec_cmd(\"qs\")'"
+  if ! git -C "$DOT" diff --quiet || ! git -C "$DOT" diff --cached --quiet; then
+    die "working tree contains tracked edits; review or save them before dot pull (no automatic stash)"
+  fi
+  if ! git -C "$DOT" pull --rebase; then
+    warn "pull stopped: resolve with 'git -C "$DOT" rebase --continue' or --abort"
+    return 1
+  fi
+  # This does not apply new links or run setup; linked *existing* files still
+  # track the repo and may change when Git updates them. Full activation gates
+  # and rollback are tracked separately in #6.
+  say "repository updated; review changes and prerequisites before running dot link"
 }
 
 pkglist() { grep -v -E '^\s*(#|$)' "$1" 2>/dev/null | awk '{print $1}' || true; }
@@ -377,9 +446,9 @@ dot — $DOT on $HOST
   dot link             (re)link everything for this machine (common/* + hosts/$HOST)
   dot unlink           remove the links (repo files stay)
   dot status           git status + links that are missing or were replaced by an app
-  dot diff [--stat] [path…]  what \`dot save\` would commit (line by line, or a summary)
-  dot save [message]   take back app-replaced files, commit, pull --rebase, push
-  dot pull             pull other machines' changes and relink
+  dot diff [--stat] [path…]  tracked shared/host changes; ignores untracked files
+  dot save [message]   commit tracked shared/host edits, rebase and push\n  dot save --allow-staged MSG  also publish explicitly staged other-host/maintenance files
+  dot pull             pull without autostash; new links require explicit dot link
   dot add [--host] F…  move file(s) into the repo (common, or this host with --host) and link
   dot packages         snapshot this machine's extra packages into hosts/$HOST
   dot optional [grp…]  optional apps: ask about new groups, or install the named ones
