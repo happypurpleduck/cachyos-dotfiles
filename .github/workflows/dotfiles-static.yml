@@ -48,3 +48,8 @@ jobs:
         run: |
           python3 -m py_compile scripts/first-login.py tests/test-first-login.py
           python3 tests/test-first-login.py
+      - name: Offline asset failure/atomic-promote regression
+        run: |
+          python3 -m py_compile scripts/asset-manager.py tests/test-assets.py
+          bash -n scripts/fetch-assets
+          python3 tests/test-assets.py
