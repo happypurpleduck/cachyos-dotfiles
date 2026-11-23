@@ -344,27 +344,11 @@ cmd_packages() {
 }
 
 cmd_install_packages() {
-  local repo aurs avail missing
-  repo=$( (pkglist "$DOT/packages/common.txt"; pkglist "$HOSTDIR/packages.txt"; opt_pkgs) | sort -u)
-  avail=$(pacman -Slq | sort -u)
-  missing=$(comm -23 <(echo "$repo") <(echo "$avail"))
-  [ -z "$missing" ] || warn "not in the repos, skipped: $(echo $missing)"
-  say "installing repo packages (sudo)"
-  # shellcheck disable=SC2046
-  sudo pacman -S --needed $(comm -12 <(echo "$repo") <(echo "$avail"))
-  aurs=$( (pkglist "$DOT/packages/aur.txt"; pkglist "$HOSTDIR/aur.txt"; opt_pkgs aur) | sort -u)
-  if [ -n "$aurs" ]; then
-    say "AUR packages: $(echo $aurs)"
-    if command -v paru >/dev/null; then
-      # shellcheck disable=SC2086
-      paru -S --needed $aurs
-    else
-      warn "paru not installed — install these yourself: $(echo $aurs)"
-    fi
-  fi
+  need python3 python
+  # Run all repo/AUR dependency checks BEFORE invoking a package manager.
+  python3 "$DOT/scripts/package-audit.py" --repo "$DOT" --host "$HOST" --install
 }
 
-# Safe system integration: preview without sudo, apply only by explicit flag.
 cmd_system_setup() {
   if [ "${1:-}" = "--apply" ]; then
     sudo "$DOT/system/setup" --apply
@@ -394,6 +378,8 @@ cmd_install() {
     say "optional apps (answers are saved in hosts/$HOST/optional.txt)"
     cmd_optional_ask_only
   fi
+  # Package prerequisites must be verifiable even if no install is necessary.
+  python3 "$DOT/scripts/package-audit.py" --repo "$DOT" --host "$HOST" || die "package prerequisites failed"
   # Avoid modifying the machine until the link plan is free of blockers.
   python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" \
     --home "$HOME" --dry-run || die "link preflight failed; inspect dot doctor"
@@ -408,9 +394,31 @@ cmd_install() {
     say "system changes skipped; preview: dot system-setup (apply: dot system-setup --apply)"
   fi
   say "user services"
-  systemctl --user daemon-reload
-  systemctl --user enable gnome-keyring-daemon.socket hokum.service 2>/dev/null || true
-  systemctl --user disable hyprpolkitagent.service 2>/dev/null || true
+  systemctl --user daemon-reload || die "user systemd manager unavailable; log into a user session before installing services"
+  if systemctl --user cat hokum.service >/dev/null 2>&1; then
+    systemctl --user enable hokum.service || die "failed to enable hokum notifications"
+  else
+    die "required hokum.service is missing; install hokum-bin before enabling notifications"
+  fi
+  if systemctl --user cat gnome-keyring-daemon.socket >/dev/null 2>&1; then
+    systemctl --user enable gnome-keyring-daemon.socket || warn "could not enable optional keyring socket"
+  else
+    warn "optional gnome-keyring-daemon.socket not found; keeping existing keyring configuration"
+  fi
+  # Shell selection is personal to each host; never silently change it.
+  if command -v zsh >/dev/null && [ "$(getent passwd "$(id -un)" | cut -d: -f7)" != "$(command -v zsh)" ]; then
+    if [ -t 0 ]; then
+      read -r -p ":: switch your login shell to zsh? [y/N] " answer
+      if [[ ${answer,,} == y* ]]; then
+        chsh -s "$(command -v zsh)" || die "could not change login shell"
+      else
+        warn "keeping existing login shell"
+      fi
+    else
+      warn "login shell is not zsh; run chsh -s $(command -v zsh) manually if desired"
+    fi
+  fi
+  # Do not disable another polkit agent without a confirmed replacement.
   fc-cache -f >/dev/null
   if [ -x "$HOSTDIR/setup" ]; then
     say "hosts/$HOST/setup"

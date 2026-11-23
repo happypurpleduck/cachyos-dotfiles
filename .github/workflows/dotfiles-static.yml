@@ -35,3 +35,7 @@ jobs:
           python3 tests/test-migrate-folded.py
       - name: System setup preview and privilege guard
         run: bash tests/test-system-preview.sh
+      - name: Package / AUR / prerequisite simulation
+        run: |
+          python3 -m py_compile scripts/package-audit.py tests/test-package-audit.py
+          python3 tests/test-package-audit.py

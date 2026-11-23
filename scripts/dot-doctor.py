@@ -77,42 +77,15 @@ def package_names(path: Path) -> list[str]:
 
 
 def packages_status(repo: Path, host: str) -> dict:
-    names = set(package_names(repo / "packages/common.txt"))
-    names.update(package_names(repo / "hosts" / host / "packages.txt"))
-    aurs = set(package_names(repo / "packages/aur.txt"))
-    aurs.update(package_names(repo / "hosts" / host / "aur.txt"))
-    for selected in package_names(repo / "hosts" / host / "optional.txt"):
-        opt = repo / "packages/optional" / f"{selected}.txt"
-        for item in package_names(opt):
-            if item.startswith("aur:"):
-                aurs.add(item[4:])
-            else:
-                names.add(item)
-    pacman = shutil.which("pacman")
-    if not pacman:
-        return {
-            "status": "pacman-unavailable",
-            "missing": [],
-            "desired_repo": len(names),
-            "desired_aur": len(aurs),
-            "aur_helper": bool(shutil.which("paru")),
-        }
-    try:
-        installed = subprocess.run(
-            [pacman, "-Qq"],
-            capture_output=True, text=True, check=True, timeout=15,
-        ).stdout.splitlines()
-    except (OSError, subprocess.SubprocessError) as exc:
-        return {
-            "status": "query-failed", "error": str(exc), "missing": [],
-            "desired_repo": len(names), "desired_aur": len(aurs),
-            "aur_helper": bool(shutil.which("paru")),
-        }
-    return {
-        "status": "ok", "missing": sorted((names | aurs) - set(installed)),
-        "desired_repo": len(names), "desired_aur": len(aurs),
-        "aur_helper": bool(shutil.which("paru")),
-    }
+    from runpy import run_path
+
+    path = repo / "scripts/package-audit.py"
+    if path.is_file():
+        data = run_path(str(path))["audit"](repo, host)
+        data["missing"] = sorted(set(data["missing_repo"] + data["missing_aur"]))
+        return data
+    return {"status": "package-audit-unavailable", "missing": [],
+            "blocking": True, "aur_helper": None}
 
 
 def report(repo: Path, home: Path, host: str) -> dict:
@@ -186,7 +159,7 @@ def main() -> int:
             print("  BLOCKED: resolve collisions and folded/foreign parent links before apply")
 
     if args.strict and (data["blocking_targets"] or data["packages"]["missing"]
-                        or data["packages"]["status"] != "ok"):
+                        or data["packages"]["blocking"]):
         return 1
     return 0
 
