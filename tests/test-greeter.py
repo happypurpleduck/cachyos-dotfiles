@@ -80,7 +80,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert (stage / "shell.qml").is_file()
     assert (stage / "wallpaper").read_bytes() == fallback.read_bytes()
     assert json.loads((stage / "theme.json").read_text())["accentHex"] == "#89b4fa"
-    assert cfg.read_bytes() == before and not calls.exists()
+    assert cfg.read_bytes() == before and not mutations()
 
     run("--activate", "--confirm", "ACTIVATE greetd", good=False)
     run("--activate", "--confirm", "ACTIVATE greetd",
