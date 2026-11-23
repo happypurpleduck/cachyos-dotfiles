@@ -22,7 +22,7 @@ with tempfile.TemporaryDirectory() as temp:
         target = repo / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((actual / path).read_bytes())
-        target.chmod(0o755 if path == "install" else 0o644)
+        target.chmod(0o755 if path in ("install", "common/bin/.local/bin/dot") else 0o644)
 
     for source in (
         "scripts/effective-targets.py",
