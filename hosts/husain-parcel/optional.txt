@@ -1,0 +1,2 @@
+# husain-parcel — optional package groups (dot optional). "!name" = declined.
+!qbittorrent
