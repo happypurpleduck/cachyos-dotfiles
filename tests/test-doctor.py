@@ -40,7 +40,7 @@ with tempfile.TemporaryDirectory() as temp:
     override = repo / "hosts/A/home/.config/app/settings.conf"
     override.parent.mkdir(parents=True, exist_ok=True)
     override.write_text("A settings\n")
-    (repo / "packages/common.txt").write_text("git\n".replace("\n", "\n"))
+    (repo / "packages/common.txt").write_text("git\n")
     # The dry-run packages step must not depend on the CI runner's pacman.
     (repo / "scripts/package-audit.py").write_text(
         "def audit(repo, host):\n"
