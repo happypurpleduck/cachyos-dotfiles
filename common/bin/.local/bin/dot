@@ -424,7 +424,7 @@ cmd_install_packages() {
 cmd_greeter() {
   need python3 python
   case "${1:-}" in
-    --stage | --activate | --rollback)
+    --stage | --activate | --install | --rollback)
       check_host_identity
       sudo python3 "$DOT/scripts/greeter-control.py" --home "$HOME" \
         --source "$HOME/.config/quickshell" --user "$(id -un)" "$@"
@@ -436,7 +436,8 @@ cmd_greeter() {
   esac
 }
 
-# Explicit, user-owned vendor installation; never part of unattended dot install.
+# Privileged host services remain explicit; first-party user-local apps are
+# bootstrapped as part of the full desktop installation.
 cmd_services() {
   need python3 python
   local arg
@@ -503,13 +504,14 @@ install_recover() {
       warn "automatic link rollback failed; inspect journal for $txid before proceeding"
     fi
   fi
-  warn "installed pacman/AUR packages and optional downloads are NOT automatically removed"
+  warn "installed packages, optional downloads and self-managed apps are NOT automatically removed"
   warn "if --apply-system was used, restore PAM from its root-owned backup as instructed"
   return 1
 }
 
-# Installation has explicit preflight and failure boundaries. It never runs a
-# host script or swaps a login manager automatically.
+# Installation has explicit preflight and failure boundaries. It never runs
+# arbitrary host scripts; required Mocha greetd activation uses a separate
+# root-owned rollback journal and does not disturb the running session.
 cmd_install() {
   if [ "${1:-}" = "--dry-run" ]; then
     [ "$#" -eq 1 ] || die "usage: dot install [--dry-run|--apply-system]"
@@ -527,7 +529,10 @@ cmd_install() {
         die "unsafe home configuration targets; inspect dot doctor"
       preview_args=(--backup-conflicts)
     fi
-    python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" --home "$HOME" "${preview_args[@]}" --dry-run
+    python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" --home "$HOME" "${preview_args[@]}" --dry-run || return
+    say "upstream applications (read-only status; installed if missing during apply)"
+    python3 "$DOT/scripts/upstream-apps.py" --home "$HOME" status
+    say "Mocha greeter will be staged and enabled for next boot (existing DM backed up)"
     return
   fi
   check_host_identity
@@ -611,7 +616,7 @@ cmd_install() {
       return 1
     fi
   else
-    say "system files and login manager left unchanged; dot system-setup previews"
+    say "optional PAM/DDC integration unchanged; Mocha greeter handled separately"
   fi
   # Never run an arbitrary host-specific setup script during routine install.
   if [ -x "$HOSTDIR/setup" ]; then
@@ -632,7 +637,20 @@ cmd_install() {
     "$HOME/.config/quickshell/scripts/mocha-theme" restore ||
       warn "active wallpaper refresh failed; generated theme files remain"
   fi
-  say "install complete: managed links and themes ready; no greeter replacement"
+  say "installing missing first-party self-managed apps (mise, Zed)"
+  if ! python3 "$DOT/scripts/upstream-apps.py" --home "$HOME" install mise zed; then
+    install_recover "$link_txid" "self-managed application bootstrap"
+    return 1
+  fi
+  # Installing the complete desktop includes its login manager. The separate
+  # greeter journal preserves the old DM/config; never interrupt this session.
+  say "staging and enabling Mocha greeter for next boot"
+  if ! sudo python3 "$DOT/scripts/greeter-control.py" --home "$HOME" \
+      --source "$HOME/.config/quickshell" --user "$(id -un)" --install; then
+    install_recover "$link_txid" "Mocha greeter staging/activation"
+    return 1
+  fi
+  say "install complete: managed links, upstream apps and Mocha greeter ready (next boot)"
   say "recovery link transaction: ${link_txid:-none (no changes)}"
 }
 
@@ -699,7 +717,7 @@ dot — $DOT on $HOST
   dot install          packages, assets, links, user services (no system changes)
   dot install --apply-system  explicitly include limited PAM/DDC system setup
   dot system-setup [--apply]  preview or apply limited PAM/DDC setup
-  dot greeter [--stage|--activate|--rollback TXID]  safe login-manager control
+  dot greeter [--stage|--install|--activate|--rollback TXID]  safe login-manager control
   dot host-setup [--apply]    preview or explicitly run this host's setup script
   dot services                read-only host system service (Bluetooth) status
   dot services --apply --confirm 'ENABLE HOST SERVICES'  explicit activation

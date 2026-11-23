@@ -1,2 +1,4 @@
 # AUR packages every machine gets — last resort, only when there's no repo/official build.
 hokum-bin
+# Official Google browser binary, reviewed AUR exception; Shelly only.
+google-chrome

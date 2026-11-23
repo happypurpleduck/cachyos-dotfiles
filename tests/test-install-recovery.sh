@@ -60,6 +60,21 @@ if os.environ.get("SIMULATE_THEME_FAIL") == "1":
     raise SystemExit(1)
 print("mock first-login complete")
 PY
+cat > "$checkout/scripts/upstream-apps.py" <<'PY'
+from pathlib import Path
+import os
+import sys
+home = Path.home()
+if "status" in sys.argv:
+    print("mise: missing; zed: missing (read-only)")
+elif "install" in sys.argv:
+    assert sys.argv[-2:] == ["mise", "zed"], sys.argv
+    if os.environ.get("SIMULATE_UPSTREAM_FAIL") == "1":
+        print("injected first-party app failure", file=sys.stderr)
+        raise SystemExit(2)
+    (home / "upstream-apps-invoked").write_text("mise zed")
+    print("mise and zed installed from first-party installers")
+PY
 printf '#!/bin/sh\nexit 0\n' > "$checkout/scripts/fetch-assets"
 chmod +x "$checkout/scripts/fetch-assets"
 cat > "$fakebin/systemctl" <<'SH'
@@ -74,6 +89,13 @@ esac
 SH
 cat > "$fakebin/sudo" <<'SH'
 #!/bin/sh
+case "$*" in
+  *"scripts/greeter-control.py"* )
+    echo "$*" >> "$HOME/greeter-invoked"
+    [ "${SIMULATE_GREETER_FAIL:-0}" = 1 ] && exit 1
+    echo "greeter enabled for next boot; current session unchanged; rollback: dot greeter --rollback 20261123T000001Z-cafecafecafe"
+    exit 0 ;;
+esac
 echo "$*" >> "$HOME/sudo-invoked"
 exit 1
 SH
@@ -138,9 +160,29 @@ grep -q 'NOT automatically removed' "$tmp/error"
 [ "$(cat "$home/rollback-invoked")" = yes ]
 [ ! -e "$home/host-setup-invoked" ]
 
+# A failed first-party app bootstrap is not reported as successful: installed
+# upstream apps are user-local, but managed links and newly enabled units recover.
+if SIMULATE_UPSTREAM_FAIL=1 "$dot" install >"$tmp/output" 2>"$tmp/error"; then
+  echo "upstream installer failure was swallowed" >&2; exit 1
+fi
+grep -q 'installation stopped during: self-managed application bootstrap' "$tmp/error"
+[ ! -e "$home/.config/test-linked" ]
+
+# A greeter activation failure also triggers managed-link recovery.
+if SIMULATE_GREETER_FAIL=1 "$dot" install >"$tmp/output" 2>"$tmp/error"; then
+  echo "failed greeter activation was accepted" >&2; exit 1
+fi
+grep -q 'installation stopped during: Mocha greeter staging/activation' "$tmp/error"
+grep -q 'managed link changes restored' "$tmp/error"
+[ ! -e "$home/.config/test-linked" ]
+! grep -q 'install complete' "$tmp/output"
+
 # A successful retry must not run host scripts or change /etc automatically.
 SIMULATE_THEME_FAIL=0 "$dot" install >"$tmp/output" 2>"$tmp/error"
 [ "$(cat "$home/.config/test-linked")" = "new link for this test" ]
+[ "$(cat "$home/upstream-apps-invoked")" = "mise zed" ]
+grep -q 'Mocha greeter ready (next boot)' "$tmp/output"
+grep -q -- '--install' "$home/greeter-invoked"
 [ ! -e "$home/host-setup-invoked" ]
 "$dot" host-setup >"$tmp/preview"
 [ ! -e "$home/host-setup-invoked" ]
@@ -171,4 +213,4 @@ SIMULATE_EXISTING_CONFIG=1 "$dot" install </dev/null >"$tmp/output" 2>"$tmp/erro
 grep -q '2 existing home config' "$tmp/output"
 [ -e "$home/package-install-invoked" ]
 
-echo 'installer checkpoint rollback, automatic existing-file backups and host setup: OK'
+echo 'installer checkpoint rollback, first-party apps, greeter enablement and host setup: OK'

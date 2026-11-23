@@ -17,9 +17,10 @@ with tempfile.TemporaryDirectory() as tmp:
         (repo / rel).write_bytes((root_source / rel).read_bytes())
     (repo / "common/app/.config/app/config").write_text("shared")
     (repo / "packages/common.txt").write_text("git\neza\nbat\nfd\n")
-    (repo / "packages/aur.txt").write_text("hokum-bin\n")
+    (repo / "packages/aur.txt").write_text("hokum-bin\ngoogle-chrome\n")
     (repo / "packages/aur-exceptions.json").write_text(
         '{"hokum-bin":{"scope":"common","reason":"core daemon","review":"review PKGBUILD"},'
+        '"google-chrome":{"scope":"common","reason":"default browser","review":"review PKGBUILD"},'
         '"mock-aura":{"scope":"host","reason":"fixture","review":"review fixture"}}'
     )
     (repo / "hosts/A/optional.txt").write_text("!qbittorrent\nphoto\n")
@@ -83,12 +84,12 @@ else:
         return proc
 
     assert "repo missing: bat, eza, fd, krita" in audit().stdout
-    assert "AUR missing: hokum-bin, mock-aura" in audit().stdout
+    assert "AUR missing: google-chrome, hokum-bin, mock-aura" in audit().stdout
     audit("--install", ok=False)
     assert installed.read_text() == "git\n", "AUR installed without explicit approval"
     audit("--install", "--approve-aur")
     assert set(installed.read_text().split()) == {
-        "git", "eza", "bat", "fd", "krita", "hokum-bin", "mock-aura"
+        "git", "eza", "bat", "fd", "krita", "google-chrome", "hokum-bin", "mock-aura"
     }
     assert "repo missing: none" in audit().stdout
     # Reset the log after the successful authorized scenario before testing
@@ -112,7 +113,7 @@ else:
     assert installed.read_text() == "git\n", "Shelly bypassed required AUR approval"
     assert not shelly_commands.exists(), "Shelly executed before approval"
     audit("--install", "--approve-aur")
-    assert shelly_commands.read_text() == "install aur hokum-bin mock-aura"
+    assert shelly_commands.read_text() == "install aur google-chrome hokum-bin mock-aura"
     assert "repo missing: none" in audit().stdout
     (binpath / "shelly").unlink()
     installed.write_text("git\n")

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Safe, opt-in Quickshell greeter staging, activation and TTY rollback.
+"""Safe Quickshell greeter staging, declarative installation and TTY rollback.
 
-Never restarts a running display manager. Activation requires an explicit
-confirmation token and refuses to replace SDDM/GDM/LightDM without separate
-consent. Supports --root for isolated disposable-root tests.
+Default desktop install stages and enables greetd for next boot, with a
+root-owned rollback journal. Manual --activate retains its explicit gates.
+Never stops/restarts a currently running display manager.
 """
 from __future__ import annotations
 
@@ -150,6 +150,9 @@ def stage(root: Path, source: Path, home: Path, user: str) -> Path:
                 file.chmod(0o644)
         if not (temp / "greeter.json").is_file() or hash_tree(temp) is None:
             raise ValueError("invalid greeter stage")
+        if dest.is_dir() and hash_tree(dest) == hash_tree(temp):
+            print(f"greeter stage already current at {dest}")
+            return dest
         if dest.exists():
             old = parent / f"mocha-greeter-staged.previous-{uuid4().hex[:12]}"
             os.replace(dest, old)
@@ -274,6 +277,30 @@ def activate(root: Path, source: Path, home: Path, user: str, *,
     return txid
 
 
+def install_default(root: Path, source: Path, home: Path, user: str, *,
+                    ctl: str | None) -> str | None:
+    """Reconcile desired greeter state, retaining full activation rollback.
+
+    Normal installs apply a reviewed, fixed Mocha configuration. Repeated
+    installs never toggle display managers if it is already effective.
+    """
+    if not ctl:
+        raise ValueError("systemctl is required for display-manager installation")
+    check_prereqs(root, source, user)
+    staged = stage(root, source, home, user)
+    cfg = current_config(root)
+    live = root / "etc/greetd/mocha-greeter"
+    others = present_display_manager(root, ctl)
+    if (not others and cfg.is_file()
+            and cfg.read_text(encoding="utf-8") == build_config()
+            and hash_tree(live) == hash_tree(staged)
+            and is_greetd_enabled(ctl)):
+        print("greeter already configured for next boot; no display-manager changes")
+        return None
+    return activate(root, source, home, user, ctl=ctl,
+                    confirm="ACTIVATE greetd", replace=True)
+
+
 def rollback(root: Path, txid: str, ctl: str) -> None:
     if not TX_ID.fullmatch(txid):
         raise ValueError("invalid greeter transaction id")
@@ -320,6 +347,8 @@ def main() -> int:
     actions = parser.add_mutually_exclusive_group()
     actions.add_argument("--stage", action="store_true")
     actions.add_argument("--activate", action="store_true")
+    actions.add_argument("--install", action="store_true",
+                         help="reconcile default greeter for next boot")
     actions.add_argument("--rollback", metavar="TXID")
     parser.add_argument("--replace-display-manager", action="store_true")
     parser.add_argument("--confirm")
@@ -328,7 +357,7 @@ def main() -> int:
         root = args.root.resolve(strict=True)
         home = args.home.expanduser().resolve(strict=True)
         source = (args.source or home / ".config/quickshell").resolve(strict=True)
-        if root == Path("/") and (args.stage or args.activate or args.rollback):
+        if root == Path("/") and (args.stage or args.activate or args.install or args.rollback):
             if os.geteuid() != 0 or not os.environ.get("SUDO_USER"):
                 raise ValueError("use sudo from the intended account; no direct root activation")
         if args.stage:
@@ -336,6 +365,8 @@ def main() -> int:
         elif args.activate:
             activate(root, source, home, args.user, ctl=args.systemctl,
                      confirm=args.confirm, replace=args.replace_display_manager)
+        elif args.install:
+            install_default(root, source, home, args.user, ctl=args.systemctl)
         elif args.rollback:
             rollback(root, args.rollback, args.systemctl or "systemctl")
         else:

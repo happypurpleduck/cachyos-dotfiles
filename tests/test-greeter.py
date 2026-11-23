@@ -46,13 +46,13 @@ with tempfile.TemporaryDirectory() as tmp:
         "case \"$cmd\" in\n"
         "  is-enabled|is-active)\n"
         "    grep -qx \"$unit\" \"$MOCK_SERVICES\" && exit 0 || exit 1 ;;\n"
-        "  enable) printf '%s\\n' \"$unit\" > \"$MOCK_SERVICES\"; if [ \"${MOCK_FAIL_GREETD:-0}\" = 1 ] && [ \"$unit\" = greetd.service ]; then exit 1; fi; exit 0 ;;\n"
-        "  disable) sed -i \"/^$unit$/d\" \"$MOCK_SERVICES\"; exit 0 ;;\n"
+        "  enable) printf '%s\\n' \"$unit\" > \"$MOCK_SERVICES\"; if [ \"${MOCK_FAIL_GREETD:-0}\" = 1 ] && [ \"$unit\" = greetd.service ]; then exit 1; fi; ln -sfn \"../$unit\" \"$MOCK_DM_LINK\"; exit 0 ;;\n"
+        "  disable) sed -i \"/^$unit$/d\" \"$MOCK_SERVICES\"; [ \"$(readlink \"$MOCK_DM_LINK\" 2>/dev/null)\" = \"../$unit\" ] && rm -f \"$MOCK_DM_LINK\"; exit 0 ;;\n"
         "esac\nexit 2\n"
     )
     sh.chmod(0o755)
     env = {**os.environ, "MOCK_CALLS": str(calls),
-           "MOCK_SERVICES": str(service_state)}
+           "MOCK_SERVICES": str(service_state), "MOCK_DM_LINK": str(dm)}
 
     def run(*args, good=True):
         result = subprocess.run(
@@ -115,7 +115,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert not live.exists()
 
     # Updating an existing greetd must never turn off the only login manager.
-    dm.unlink()
+    dm.unlink(missing_ok=True)
     service_state.write_text("greetd.service\n")
     cfg.write_text("existing greetd config\n")
     prior = cfg.read_bytes()
@@ -136,5 +136,37 @@ with tempfile.TemporaryDirectory() as tmp:
     run("--rollback", current[0].parent.name)
     assert service_state.read_text().strip() == "greetd.service"
     assert cfg.read_bytes() == prior
+
+
+    # Default full-desktop reconciliation switches SDDM at next boot while
+    # preserving its state for rollback, and is repeatable without toggling DMs.
+    service_state.write_text("sddm.service\n")
+    dm.unlink(missing_ok=True)
+    dm.symlink_to("../sddm.service")
+    cfg.write_text("stock greeter config\n")
+    env["MOCK_FAIL_GREETD"] = "1"
+    run("--install", good=False)
+    env.pop("MOCK_FAIL_GREETD")
+    assert service_state.read_text().strip() == "sddm.service"
+    assert cfg.read_text() == "stock greeter config\n"
+    assert not live.exists()
+    first = run("--install")
+    assert "greeter enabled for next boot" in first.stdout
+    assert service_state.read_text().strip() == "greetd.service"
+    active_journals = [
+        p for p in (fake / "var/backups/cachyos-dotfiles/greeter").glob("*/journal.json")
+        if json.loads(p.read_text())["status"] == "active"
+    ]
+    assert len(active_journals) == 1
+    before_mutations = mutations()
+    again = run("--install")
+    assert "greeter already configured" in again.stdout
+    assert mutations() == before_mutations, "repeat install switched DMs"
+    assert len([p for p in (fake / "var/backups/cachyos-dotfiles/greeter").glob("*/journal.json")
+                if json.loads(p.read_text())["status"] == "active"]) == 1
+    run("--rollback", active_journals[0].parent.name)
+    assert cfg.read_text() == "stock greeter config\n"
+    assert service_state.read_text().strip() == "sddm.service"
+    assert not live.exists()
 
 print("isolated greeter staging, rollback, and pre-enabled greetd recovery: OK")

@@ -93,8 +93,9 @@ intentionally leaves copy-once application state in place.
 
 Packages installed by pacman/AUR are **not automatically uninstalled**
 on failure; reversing those transactions or root-owned PAM backups requires
-separate user review. Optional assets may remain cached. A greeter is never
-implicitly staged, enabled or restarted.
+separate user review. Optional assets may remain cached. The Mocha greeter
+is staged and enabled by default for the next boot, without restarting the
+running display manager. Its root-owned rollback is separate from HOME links.
 
 Arbitrary host scripts are also separate from routine installation:
 
@@ -140,25 +141,29 @@ T3 release/tag is stored under `~/.local/opt/t3code/.version.json`.
 
 Zed and mise are **not** pacman/AUR packages in this project.
 Their **official upstream user-local installers** manage the binary and its
-subsequent updates. Install them explicitly when desired:
+subsequent updates. A full `dot install` bootstraps **missing** mise and Zed
+by default, without sudo or a package manager, and does not upgrade existing
+user-local installations. These commands also remain available:
 
 ```sh
 dot apps status               # read-only: self-managed / externally managed / missing
-dot apps install mise zed     # opt in to the two official first-party installers
+dot apps install mise zed     # install missing binaries independently of full install
 dot apps update mise          # runs mise self-update --yes --no-plugins
 dot apps update zed           # reminder: Zed auto-updates on restart
 ```
 
-`dot apps install` downloads and executes a script from the official
-`https://mise.run` or `https://zed.dev/install.sh` endpoint **only after
-you explicitly invoke the install command**. It rejects non-HTTPS or unexpected
+`dot apps install` and full `dot install` download and execute a script
+from the official `https://mise.run` or `https://zed.dev/install.sh` endpoint
+**only when that upstream-managed application is missing**. It rejects non-HTTPS or unexpected
 redirect domains, prints the script SHA256, and never uses sudo. Do not mix
 a pacman-managed `mise` or `zed` executable with upstream self-update:
 the command refuses an already detected external installation and asks for
 a manual migration. Mise's official installer validates its downloaded
 binary against upstream release checksums; Zed uses its own built-in
-automatic updater. `dot apps` deliberately does not silently update either
-application during `dot install` or Git synchronization.
+automatic updater. Neither application is silently updated during `dot install` or Git
+synchronization. Existing external/package-managed installations are never
+replaced silently; the installer reports the conflict rather than mixing
+self-updating and pacman-managed copies.
 
 Installed-package discovery is **not** an installation manifest: `dot packages`
 prints repository and foreign/local packages outside declared requirements,
@@ -169,11 +174,11 @@ edit `hosts/<host>/packages.txt` for official repository packages or
 pacman-installed mise/Zed are reported for manual migration, never adopted into
 managed host requirements or silently replaced.
 
-On a new machine, first install the shared system dependencies, then use
-`dot apps install mise zed` to bootstrap the upstream binaries. You can do
-this independently after login; missing either app must not break Zsh or
-first-login. `dot doctor` reports missing or externally managed upstream
-apps separately from optional asset downloads.
+On a new machine, `./install` provides the shared packages and self-managed
+mise/Zed automatically. On an already configured machine the same command
+skips applications already present. You may also use `dot apps install mise zed`
+independently to repair only those applications. `dot doctor` reports missing
+or externally managed upstream apps separately from optional asset downloads.
 
 ### Initial theme and session readiness
 
@@ -202,20 +207,22 @@ handled separately. Host-specific audio/GPU/device settings remain under
 ```sh
 dot system-setup                 # read-only preview of PAM/keyring and i2c-dev
 dot system-setup --apply         # explicitly apply the limited changes with sudo
-dot install                      # does NOT modify /etc or the login manager
-dot install --apply-system       # explicitly include limited PAM/DDC setup
+dot install                      # stage and enable Mocha greetd for next boot
+dot install --apply-system       # additionally apply limited PAM/DDC setup
 ```
 
 The system setup script makes a timestamped root-owned backup before changing
 greetd PAM hooks and refuses to edit an unfamiliar PAM layout. Recovery
 instructions are printed when a backup is written. The optional i2c-dev
 module-load rule is additive. Browser managed-policy ownership and the
-display manager/greeter are **never** changed by ordinary `dot install`.
+display manager/greeter **are staged and enabled by default** during a
+successful `dot install`. The currently running session is never restarted.
 
-### Explicit greeter staging and TTY recovery
+### Default greeter installation and TTY recovery
 
 ```sh
 dot greeter                                      # read-only preflight: deps and existing DMs
+dot greeter --install                            # reconcile greeter (also done by dot install)
 dot greeter --stage                              # sudo: stage a complete independent greeter
 dot greeter --activate --confirm 'ACTIVATE greetd'
 # If replacing SDDM, GDM or LightDM, explicitly include:
@@ -223,6 +230,14 @@ dot greeter --activate --replace-display-manager --confirm 'ACTIVATE greetd'
 # From a TTY if login is broken: Ctrl+Alt+F2, log in, then:
 dot greeter --rollback TXID
 ```
+
+`dot install` stages and activates the Mocha greeter as the default login
+manager, including replacing an existing SDDM/GDM/LightDM for the next boot.
+Repeated installations that already match the expected theme, greetd config,
+and service state do not make another greeter transaction. If activation fails,
+the original display manager is restored by its own transaction and installation
+reports failure. This is a default *declarative desktop setup*, not a forced
+restart or an unchecked replacement.
 
 Staging verifies the Quickshell source, greetd/cage/qs/session dependencies,
 then writes only `/etc/greetd/mocha-greeter-staged/`. A missing wallpaper uses
@@ -265,7 +280,7 @@ The installer audits the selected host's declared pacman and AUR requirements
 --repo "$(dot cd)" --host "$(hostname)"` is a read-only standalone check.
 AUR usage is restricted to explicitly documented exceptions in
 `packages/aur-exceptions.json`: `hokum-bin` as the core notification
-service, and host-selected `google-chrome` for Chrome. No other AUR
+service, and shared `google-chrome` for Chrome on every desktop. No other AUR
 package may be introduced without a separate review and policy update.
 An AUR installer is never invoked unattended; the installer displays
 the pending exceptions and requires typing `APPROVE AUR` before proceeding.
@@ -378,13 +393,22 @@ references a different user's wallpaper file.
 2. asks about optional apps (`packages/optional/`, e.g. qBittorrent) — answers are saved per machine —
    then installs `packages/common.txt`, the host's `packages.txt` and the chosen optional groups
    (reviewed AUR exceptions via Shelly only)
-3. attempts optional assets: wallpapers, cursors, mpv scripts/shaders and T3 Code (failures are reported but do not block linking; Zed/mise are package-managed)
-4. links the effective per-host files transactionally (blocking existing collisions unless explicitly approved)
-5. **skips system-level changes by default**; pass `--apply-system` to opt into limited PAM/DDC setup
-6. verifies required user services and reports any host setup script; running that script is separately consented
+3. attempts optional assets: wallpapers, cursors, mpv scripts/shaders and T3 Code (failures do not block linking)
+4. links the effective per-host files transactionally, automatically backing up replaced stock config files
+5. installs missing mise and Zed via their official user-local installers, with no pacman/AUR management
+6. stages and activates Mocha greetd for the next boot, backing up any previous display-manager state; no login-session restart
+7. keeps other system integration opt-in via `--apply-system` (PAM/DDC), and host scripts separately consented
 
-Keep the existing display manager. Check `dot doctor`, required services,
-theme generation, and shell startup before logging out or changing sessions.
+After a full installation, confirm the printed Mocha greeter rollback command,
+check `dot doctor`, required services, theme generation and shell startup before
+rebooting. If login breaks, switch to a TTY (Ctrl+Alt+F2) and use
+`dot greeter --rollback TXID` from the activation output.
+
+**Multi-host update discipline:** Commit and push `hosts/husain-parcel` only
+with that machine's settings, leaving `hosts/husain-pc` unchanged. On each
+machine, fetch and preview changes independently; a successful CI build does
+not prove a graphical login will work on that particular hardware. Do not
+assume repository commits also apply themselves to already-running desktops.
 
 ## Day to day
 
