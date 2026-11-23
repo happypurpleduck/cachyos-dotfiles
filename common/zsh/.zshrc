@@ -75,6 +75,7 @@ alias la='eza -la --icons=auto --group-directories-first --git'
 alias lt='eza --tree --level=2 --icons=auto'
 alias cat='bat --paging=never --style=plain'
 alias v='nvim'
+alias lg='lazygit'
 alias update='sudo pacman -Syu && paru -Sua'   # repos, then AUR packages
 
 # ── mise (runtimes and global tools such as claude) ─────────────────

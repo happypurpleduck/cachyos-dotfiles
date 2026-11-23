@@ -84,6 +84,7 @@ ripgrep
 lazygit
 neovim
 micro
+tmux
 git
 stow
 unzip
