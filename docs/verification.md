@@ -59,7 +59,10 @@ To replace an existing display manager, --replace-display-manager must also be s
 - Verify Hokum notification service and absence of conflicting D-Bus notification servers.
 - Verify Zsh aliases (eza/bat/fd), fonts, Kitty, generated GTK/Qt/KDE theme outputs, audio.
 - Check that the fallback cursor and wallpaper render without optional downloads.
-- Test optional Bluetooth on a host that uses it, without enabling it globally.
+- Test optional Bluetooth only when the host has selected it in
+  hosts/<hostname>/services.txt: dot services is read-only,
+  dot services --apply --confirm 'ENABLE HOST SERVICES' explicitly enables
+  it after unit/package checks. Other hosts must not be affected.
 - Confirm that B's browser/editor MIME defaults do not assume Chrome/Zed are installed.
 - Confirm self-managed mise/Zed update independently from pacman and AUR.
 
