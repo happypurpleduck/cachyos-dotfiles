@@ -69,6 +69,9 @@ To replace an existing display manager, --replace-display-manager must also be s
 ## A edits, B syncs, and ownership boundaries
 
 1. On A, edit shared Quickshell and A-only Hyprland config, leave an unrelated private app file, run dot status and dot diff.
+   Test an app-replaced plain config using dot add --host (preview), followed
+   by dot add --host --apply, then separate link/commit steps. The original
+   home file must survive; an untracked secret must never be auto-staged.
 2. Run dot save "A updates"; verify only tracked shared/current-host files are published.
 3. On B, dot pull must preview/block active shared config; inspect then dot pull --apply, followed by dot doctor and dot link when new links are needed.
 4. Confirm B receives shared edits, but never A-only monitor/GPU/audio configuration.

@@ -563,8 +563,7 @@ cmd_optional_ask_only() {
 cmd_new_host() {
   [ "$#" -le 1 ] || die "usage: dot new-host [name]"
   local name=${1:-$HOST}
-  [[ "$name" =~ ^[[:alnum:]][[:alnum:]_.-]*$ ]] ||
-    die "invalid hostname: $name"
+  [[ "$name" =~ ^[[:alnum:]][[:alnum:]_.-]*$ ]] || die "invalid hostname: $name"
   case "$name" in .|..|_template) die "cannot create reserved host: $name" ;; esac
   [ -e "$DOT/hosts/$name" ] && die "hosts/$name already exists"
   cp -r "$DOT/hosts/_template" "$DOT/hosts/$name"
@@ -574,31 +573,20 @@ cmd_new_host() {
 
 # dot add [--host] <path>… — move files into the repo and link them back.
 #   common package = first directory under ~/.config (or the file name for dotfiles in ~)
+# Safe import: preview by default; a copy does not publish or relink.
 cmd_add() {
   check_host_identity
-  local to_host=0 f rel pkg dest
-  [ "${1:-}" = "--host" ] && { to_host=1; shift; }
-  [ $# -gt 0 ] || die "usage: dot add [--host] <path>…"
-  for f in "$@"; do
-    f=$(realpath -s "$f")
-    [ -f "$f" ] && [ ! -L "$f" ] || die "$f: not a regular file"
-    rel=${f#"$HOME"/}
-    [ "$rel" != "$f" ] || die "$f is outside your home"
-    if [ $to_host -eq 1 ]; then
-      dest=$HOSTDIR/home/$rel
+  need python3 python
+  local args=() arg
+  for arg in "$@"; do
+    if [ "$arg" = "--host" ]; then
+      args+=(--host-only)
     else
-      case $rel in
-        .config/*/*) pkg=$(echo "$rel" | cut -d/ -f2) ;;
-        .local/share/*/*) pkg=$(echo "$rel" | cut -d/ -f3) ;;
-        *) pkg=$(basename "$rel" | sed 's/^\.//; s/rc$//; s/\..*$//') ;;
-      esac
-      dest=$DOT/common/$pkg/$rel
+      args+=("$arg")
     fi
-    mkdir -p "$(dirname "$dest")"
-    mv "$f" "$dest"
-    echo "   ~/$rel → ${dest#"$DOT"/}"
   done
-  cmd_link >/dev/null
+  python3 "$DOT/scripts/import-config.py" --repo "$DOT" --home "$HOME" \
+    --host "$HOST" "${args[@]}"
 }
 
 cmd_help() {
@@ -631,7 +619,8 @@ dot — $DOT on $HOST
   dot save --allow-staged MSG  also publish explicitly staged other-host/maintenance files
   dot pull             preview remote active changes; sync other-host-only edits
   dot pull --apply     apply a reviewed preflight-passing remote revision
-  dot add [--host] F…  move file(s) into the repo (common, or this host with --host) and link
+  dot add [--host] F…  preview safe app config copy (never moves HOME)
+  dot add --apply [--host] F…  copy reviewed config; link and stage separately
   dot packages         snapshot this machine's extra packages into hosts/$HOST
   dot optional [grp…]  optional apps: ask about new groups, or install the named ones
                        (--list shows them, --ask asks about all of them again)
