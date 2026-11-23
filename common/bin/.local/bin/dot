@@ -370,8 +370,21 @@ cmd_packages() {
 cmd_install_packages() {
   check_host_identity
   need python3 python
-  # Run all repo/AUR dependency checks BEFORE invoking a package manager.
-  python3 "$DOT/scripts/package-audit.py" --repo "$DOT" --host "$HOST" --install
+  # AUR installs always require a documented exception and interactive approval.
+  local missing_aur answer approval=()
+  missing_aur=$(python3 "$DOT/scripts/package-audit.py" --repo "$DOT" --host "$HOST" --json |
+    python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["missing_aur"]))') ||
+    die "package audit failed before installation"
+  if [ -n "$missing_aur" ]; then
+    warn "AUR exceptions required: $missing_aur"
+    warn "Review the upstream publisher and each AUR PKGBUILD before approving."
+    read -r -p "Type APPROVE AUR to install these exceptions: " answer
+    [ "$answer" = "APPROVE AUR" ] ||
+      die "AUR approval declined; no packages installed"
+    approval=(--approve-aur)
+  fi
+  python3 "$DOT/scripts/package-audit.py" --repo "$DOT" --host "$HOST" \
+    --install "${approval[@]}"
 }
 
 cmd_greeter() {
