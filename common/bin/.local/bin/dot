@@ -513,12 +513,25 @@ install_recover() {
 cmd_install() {
   if [ "${1:-}" = "--dry-run" ]; then
     [ "$#" -eq 1 ] || die "usage: dot install [--dry-run|--apply-system]"
-    cmd_doctor --strict
-    python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" --home "$HOME" --dry-run
+    # Preview the same backup-aware policy as a regular install, without
+    # creating any file, backup, or package transaction.
+    python3 "$DOT/scripts/package-audit.py" --repo "$DOT" --host "$HOST" ||
+      die "package prerequisites unavailable"
+    local preview_status=0
+    local -a preview_args=()
+    if python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" --home "$HOME" --install-preflight; then
+      preview_args=()
+    else
+      preview_status=$?
+      [ "$preview_status" -eq 3 ] ||
+        die "unsafe home configuration targets; inspect dot doctor"
+      preview_args=(--backup-conflicts)
+    fi
+    python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" --home "$HOME" "${preview_args[@]}" --dry-run
     return
   fi
   check_host_identity
-  local apply_system=0 a link_output link_txid="" link_preflight_status=0 backup_consent=""
+  local apply_system=0 a link_output link_txid="" link_preflight_status=0
   local -a link_args=()
   INSTALL_NEWLY_ENABLED=()
   if [ "${1:-}" = "--apply-system" ]; then
@@ -534,28 +547,23 @@ cmd_install() {
   fi
   python3 "$DOT/scripts/package-audit.py" --repo "$DOT" --host "$HOST" ||
     die "package prerequisites unavailable"
-  # Existing CachyOS configs are common on first boot; no silent overwrites.
-  # Unsafe parent/foreign-host links remain blocked even after consent.
+  # This is a declarative installer: existing files at managed targets are
+  # replaced by repository links. Save exact originals in the same journal
+  # automatically. Unsafe parent paths and cross-host links remain blockers.
   if python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" --home "$HOME" --install-preflight; then
     link_args=()
   else
     link_preflight_status=$?
     case "$link_preflight_status" in
       3)
-        warn "Existing files must be backed up before managed links replace them."
-        warn "Backups: ~/.local/state/dotfiles-backup/transactions/"
-        warn "Only planned target files are backed up, not whole app directories."
-        if ! IFS= read -r -p "Type BACKUP CONFLICTS to back up existing configs and continue: " backup_consent; then
-          die "configuration backup not approved; no packages or home links changed"
-        fi
-        [ "$backup_consent" = "BACKUP CONFLICTS" ] ||
-          die "configuration backup not approved; no packages or home links changed"
+        say "existing configs will be replaced with managed links (originals backed up automatically)"
+        say "backup location: ~/.local/state/dotfiles-backup/transactions/"
         link_args=(--backup-conflicts)
         ;;
       *) die "unsafe home configuration targets; inspect dot doctor before installing" ;;
     esac
   fi
-  # Recheck the plan under the approved policy before any package mutation.
+  # Recheck the plan under the selected backup policy before package installation.
   if ! python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" --home "$HOME" "${link_args[@]}" --dry-run >/dev/null; then
     die "link plan changed or contains unsafe targets; no packages installed"
   fi

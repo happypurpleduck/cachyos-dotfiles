@@ -302,18 +302,18 @@ use; report any defects as GitHub issues.
 
 ## New machine
 
-**Stock CachyOS configuration collisions:** An otherwise new installation may
-already have files such as `~/.zshrc`, `~/.config/hypr/hyprland.lua` and
-Micro editor syntax definitions. `./install` now gives a short read-only
-summary of existing files that would be replaced **before package installation**.
-If you explicitly type `BACKUP CONFLICTS`, it retains each original file in
-the managed link transaction and creates the repository links. Declining the
-prompt makes no package or managed-home changes. Untrusted directory symlinks,
-real directory collisions and other unsafe targets remain hard blockers even
-after approval. The transaction ID and `dot rollback TXID` recovery command
-are printed on success; later installer failures attempt automatic link
-rollback. Package installation and privileged system changes are not included
-in home-file rollback.
+**Stock CachyOS configuration replacement:** Even a new installation may
+contain files such as `~/.zshrc`, `~/.config/hypr/hyprland.lua` and Micro
+editor syntax definitions. `./install` **replaces them with the repository's
+managed links by default** without a separate conflict-approval prompt.
+Existing files are automatically saved in the transaction journal before
+replacement; no complete app directory is removed. Directory/symlink parent
+collisions and cross-host links remain hard blockers. Use
+`./install --dry-run` to preview exactly what will be replaced without
+modifying the machine. The installer prints a transaction ID for
+`dot rollback TXID`, and attempts automatic rollback on later install
+failures. Package installations and privileged changes are not part of
+home-file rollback.
 
 Install CachyOS (any desktop, or none), log in, then:
 

@@ -94,21 +94,29 @@ export UNIT_STATE="$tmp/enabled-units"
 unset DOTFILES
 printf 'A\n' | "$dot" confirm-host >/dev/null 2>&1
 
-# Unsafe targets and missing backup approval must fail BEFORE package install.
+# Unsafe targets fail before package installation.
 if SIMULATE_UNSAFE_TARGET=1 "$dot" install >"$tmp/output" 2>"$tmp/error"; then
   echo "unsafe target accepted" >&2; exit 1
 fi
 grep -q 'unsafe home configuration targets' "$tmp/error"
 [ ! -e "$home/package-install-invoked" ]
-if SIMULATE_EXISTING_CONFIG=1 "$dot" install </dev/null >"$tmp/output" 2>"$tmp/error"; then
-  echo "missing backup consent accepted" >&2; exit 1
-fi
-grep -q 'configuration backup not approved' "$tmp/error"
-if printf 'NO\n' | SIMULATE_EXISTING_CONFIG=1 "$dot" install >"$tmp/output" 2>"$tmp/error"; then
-  echo "declined backup consent accepted" >&2; exit 1
-fi
+[ ! -e "$home/.config/test-linked" ]
+
+# Dry run previews automatic backups without installing anything.
+SIMULATE_EXISTING_CONFIG=1 "$dot" install --dry-run </dev/null >"$tmp/output" 2>"$tmp/error"
+grep -q '2 existing home config' "$tmp/output"
+grep -q 'Dry run: no files changed' "$tmp/output"
 [ ! -e "$home/package-install-invoked" ]
 [ ! -e "$home/.config/test-linked" ]
+
+# Stock home config collisions are automatically backed up, without stdin.
+SIMULATE_EXISTING_CONFIG=1 "$dot" install </dev/null >"$tmp/output" 2>"$tmp/error"
+grep -q '2 existing home config' "$tmp/output"
+grep -q 'backed up automatically' "$tmp/output"
+[ "$(cat "$home/backup-consent-passed")" = yes ]
+[ -e "$home/package-install-invoked" ]
+[ -e "$home/.config/test-linked" ]
+rm -f "$home/backup-consent-passed" "$home/package-install-invoked" "$home/.config/test-linked"
 
 # A linker failure must remain fatal despite Bash conditional errexit rules.
 if SIMULATE_LINK_FAIL=1 "$dot" install >"$tmp/output" 2>"$tmp/error"; then
@@ -157,10 +165,10 @@ fi
 grep -qx 'hokum.service' "$UNIT_STATE"
 ! grep -qx 'gnome-keyring-daemon.socket' "$UNIT_STATE"
 
-# Explicit typed approval must carry the backup flag into the link transaction.
-printf 'BACKUP CONFLICTS\n' | SIMULATE_EXISTING_CONFIG=1 "$dot" install >"$tmp/output" 2>"$tmp/error"
+# Repeat installation with stock config collisions succeeds noninteractively.
+SIMULATE_EXISTING_CONFIG=1 "$dot" install </dev/null >"$tmp/output" 2>"$tmp/error"
 [ "$(cat "$home/backup-consent-passed")" = yes ]
 grep -q '2 existing home config' "$tmp/output"
 [ -e "$home/package-install-invoked" ]
 
-echo 'installer checkpoint rollback, consented existing-file backups and host setup: OK'
+echo 'installer checkpoint rollback, automatic existing-file backups and host setup: OK'
