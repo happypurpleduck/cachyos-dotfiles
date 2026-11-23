@@ -205,17 +205,18 @@ def activate(root: Path, source: Path, home: Path, user: str, *,
                "previous_live": live.exists(), "status": "started"}
     write_json(backup / "journal.json", journal)
     disabled = False
+    prepared = parent / f".mocha-live-next-{uuid4().hex[:12]}"
+    old = None
     try:
+        # Prepare complete assets while the existing live tree remains intact,
+        # then switch by renaming directories on the same filesystem.
+        shutil.copytree(staged, prepared)
+        if hash_tree(prepared) != hash_tree(staged):
+            raise ValueError("staged greeter changed during preparation")
         if live.exists():
             old = parent / f".mocha-live-old-{uuid4().hex[:12]}"
             os.replace(live, old)
-        else:
-            old = None
-        # Copying the complete staged tree avoids consuming staged fallback
-        # assets that may be needed for disaster recovery.
-        shutil.copytree(staged, live)
-        if old is not None:
-            shutil.rmtree(old)
+        os.replace(prepared, live)
         cfg.parent.mkdir(parents=True, exist_ok=True)
         tmp = cfg.with_name(f".config-{uuid4().hex[:12]}")
         tmp.write_text(build_config())
@@ -229,15 +230,21 @@ def activate(root: Path, source: Path, home: Path, user: str, *,
         journal["active_tree_sha256"] = hash_tree(live)
         journal["status"] = "active"
         write_json(backup / "journal.json", journal)
+        if old is not None:
+            shutil.rmtree(old)
     except BaseException:
         # Restore configuration, old directory and enablement after failures.
         if previous_cfg is None:
             cfg.unlink(missing_ok=True)
         else:
             cfg.write_bytes(previous_cfg)
+        if prepared.exists():
+            shutil.rmtree(prepared)
         if live.exists():
             shutil.rmtree(live)
-        if (backup / "mocha-greeter.original").exists():
+        if old is not None and old.exists():
+            os.replace(old, live)
+        elif (backup / "mocha-greeter.original").exists():
             shutil.copytree(backup / "mocha-greeter.original", live)
         if disabled:
             run_systemctl(ctl, "enable", others[0], check=False)
