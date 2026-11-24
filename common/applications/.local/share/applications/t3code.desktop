@@ -7,4 +7,4 @@ Exec=t3code-launch %U
 Icon=t3code
 Terminal=false
 Categories=Development;IDE;
-StartupWMClass=T3 Code
+StartupWMClass=com.t3tools.T3Code

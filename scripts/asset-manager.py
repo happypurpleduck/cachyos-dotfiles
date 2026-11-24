@@ -350,6 +350,31 @@ def install_t3code(home: Path) -> None:
     atomic_file(target, data, executable=True)
     atomic_file(target.parent / ".version.json",
                 (json.dumps({"source": url, "tag": tag}, indent=2) + "\n").encode())
+    try:
+        install_t3code_icon(home, target)
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        print(f"!! T3 Code installed, but its menu icon was not: {exc}", file=sys.stderr)
+
+
+def install_t3code_icon(home: Path, appimage: Path) -> None:
+    """Copy the AppImage's hicolor icons so `Icon=t3code` resolves in menus."""
+    with tempfile.TemporaryDirectory(prefix="t3code-icon-") as tmp:
+        subprocess.run(
+            [str(appimage), "--appimage-extract", "usr/share/icons/hicolor/*/apps/t3code.png"],
+            cwd=tmp, check=True, timeout=120,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        hicolor = Path(tmp, "squashfs-root/usr/share/icons/hicolor")
+        icons = [p for p in sorted(hicolor.glob("*/apps/t3code.png"))
+                 if p.is_file() and not p.is_symlink()]
+        if not icons:
+            raise ValueError("AppImage contains no hicolor t3code.png")
+        for src in icons:
+            data = src.read_bytes()
+            if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+                raise ValueError(f"{src.relative_to(hicolor)} is not a PNG")
+            size = src.parent.parent.name
+            atomic_file(home / ".local/share/icons/hicolor" / size / "apps/t3code.png", data)
 
 
 def install_asset(home: Path, name: str) -> None:

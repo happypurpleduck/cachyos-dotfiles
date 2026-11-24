@@ -42,7 +42,7 @@ return {
 		hl.exec_cmd("sleep 3 && discord --start-minimized")
 		-- T3 Code (nightly AppImage, self-updating) opens quietly on workspace 4
 		hl.exec_cmd(
-			"sleep 3 && exec ~/.local/opt/t3code/T3-Code.AppImage --password-store=gnome-libsecret",
+			"sleep 3 && exec ~/.local/opt/t3code/T3-Code.AppImage",
 			{ workspace = "4 silent" }
 		)
 	end,

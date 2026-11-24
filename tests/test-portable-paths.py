@@ -31,7 +31,7 @@ with tempfile.TemporaryDirectory() as temp:
     )
     assert result.returncode == 0, result.stderr
     assert (tmp / "called").read_text().strip() == (
-        "--password-store=gnome-libsecret one two with spaces"
+        "one two with spaces"
     )
     target.unlink()
     result = subprocess.run(

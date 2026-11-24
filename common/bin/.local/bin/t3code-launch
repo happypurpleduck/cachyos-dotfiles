@@ -6,4 +6,5 @@ if [ ! -x "$app" ]; then
   printf 'T3 Code is not installed for %s: %s\n' "$USER" "$app" >&2
   exit 127
 fi
-exec "$app" --password-store=gnome-libsecret "$@"
+# T3 selects gnome-libsecret itself on desktops Electron does not recognize.
+exec "$app" "$@"

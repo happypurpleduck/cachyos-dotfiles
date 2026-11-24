@@ -124,6 +124,25 @@ with tempfile.TemporaryDirectory() as temporary:
     finally:
         asset.download = original_download
 
+    # The menu icon is copied out of the AppImage into the user's hicolor theme.
+    fake_appimage = root / "fake.AppImage"
+    fake_appimage.write_text(
+        "#!/bin/sh\n"
+        "d=squashfs-root/usr/share/icons/hicolor/512x512/apps\n"
+        "mkdir -p \"$d\"\n"
+        "printf '\\211PNG\\r\\n\\032\\nicon' > \"$d/t3code.png\"\n"
+    )
+    fake_appimage.chmod(0o755)
+    asset.install_t3code_icon(home, fake_appimage)
+    icon = home / ".local/share/icons/hicolor/512x512/apps/t3code.png"
+    assert icon.read_bytes().startswith(b"\x89PNG"), "T3 icon not installed"
+    fake_appimage.write_text("#!/bin/sh\nexit 0\n")
+    try:
+        asset.install_t3code_icon(home, fake_appimage)
+        assert False, "AppImage without an icon was accepted"
+    except ValueError:
+        pass
+
     # Check ELF CPU target, not only the four-byte magic.
     def fake_elf(machine_id: int) -> bytes:
         data = bytearray(128 * 1024)
