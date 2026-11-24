@@ -50,6 +50,9 @@ def first_login(home: Path, script: Path) -> dict:
     wallpaper_dir = home / "Pictures/Wallpapers/catppuccin-mocha"
     st = module["load_state"]()
     st.setdefault("mode", "auto")
+    # Re-running dot install must never reset an existing choice: only a
+    # machine without saved state gets a wallpaper picked for it.
+    had_state = state_file.is_file()
     selected = Path(os.path.expanduser(str(st.get("wallpaper", ""))))
     if not selected.is_file():
         choices = sorted(
@@ -58,10 +61,11 @@ def first_login(home: Path, script: Path) -> dict:
             key=lambda p: p.name,
         ) if wallpaper_dir.is_dir() else []
         selected = choices[0] if choices else fallback_image(state_file.parent)
-        st["wallpaper"] = str(selected)
+        if not had_state or not st.get("wallpaper"):
+            st["wallpaper"] = str(selected)
     if st.get("accent") not in module["ACCENTS"]:
         st["accent"] = module["DEFAULT_ACCENT"]
-    if st.get("mode") == "auto":
+    if st.get("mode") == "auto" and not (had_state and st.get("accentHex")):
         try:
             st["accent"] = module["detect_accent"](selected)
         except (ImportError, OSError):

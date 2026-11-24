@@ -215,7 +215,20 @@ def install_wallpapers(home: Path) -> None:
         if not any(p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
                    for p in staging.rglob("*") if p.is_file()):
             raise ValueError("wallpaper checkout contains no images")
-        swap_directory(target, staging)
+        if not target.is_dir() or target.is_symlink():
+            swap_directory(target, staging)
+            return
+        # Refreshing must not drop images the user added or the one in use:
+        # only add new upstream files and update changed ones in place.
+        for source in sorted(staging.rglob("*")):
+            rel = source.relative_to(staging)
+            if ".git" in rel.parts or not source.is_file() or source.is_symlink():
+                continue
+            dest = target / rel
+            if dest.is_file() and dest.read_bytes() == source.read_bytes():
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(source, dest)
 
 
 def promote_zip_group(mpv: Path, selected: dict[str, bytes], name: str) -> None:

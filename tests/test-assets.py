@@ -65,6 +65,29 @@ with tempfile.TemporaryDirectory() as temporary:
     assert len(backups) == 1
     assert (backups[0] / "generated").read_text() == "keep old"
 
+    # Refreshing wallpapers adds/updates upstream images in place and keeps
+    # the user's own images (and the one in use) where they are.
+    walls_home = root / "walls-home"
+    walls = walls_home / "Pictures/Wallpapers/catppuccin-mocha"
+    walls.mkdir(parents=True)
+    (walls / "mine.png").write_bytes(b"user image")
+    (walls / "shared.png").write_bytes(b"old upstream")
+    def fake_clone(argv, **kwargs):
+        dest = Path(argv[-1])
+        (dest / ".git").mkdir(parents=True)
+        (dest / "shared.png").write_bytes(b"new upstream")
+        (dest / "added.jpg").write_bytes(b"added upstream")
+    old_run = asset.subprocess.run
+    try:
+        asset.subprocess.run = fake_clone
+        asset.install_wallpapers(walls_home)
+    finally:
+        asset.subprocess.run = old_run
+    assert (walls / "mine.png").read_bytes() == b"user image"
+    assert (walls / "shared.png").read_bytes() == b"new upstream"
+    assert (walls / "added.jpg").read_bytes() == b"added upstream"
+    assert not list(walls.parent.glob("*.previous-*")), "wallpaper folder was swapped out"
+
     # The GitHub Releases JSON API must be requested as JSON, not binary.
     # A binary Accept header causes an HTTP 415 on some API responses.
     old_urlopen = asset.urlopen

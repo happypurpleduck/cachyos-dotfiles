@@ -734,7 +734,7 @@ def wait_awww(timeout=8):
     return False
 
 
-def set_wallpaper(path, transition=True):
+def set_wallpaper(path, transition=True, remember=True):
     if not have("awww"):
         return
     wait_awww()
@@ -745,9 +745,9 @@ def set_wallpaper(path, transition=True):
     else:
         args += ["--transition-type", "none"]
     run(*args)
-    # keep waypaper's idea of the current wallpaper in sync
+    # keep waypaper's idea of the current wallpaper in sync (not for stand-ins)
     wp = CFG / "waypaper/config.ini"
-    if wp.exists():
+    if remember and wp.exists():
         out = []
         for l in wp.read_text().splitlines():
             out.append(f"wallpaper = {path}" if l.startswith("wallpaper =") else l)
@@ -820,17 +820,19 @@ def main(argv):
         apply_all(st)
         print(st["accent"])
     elif cmd == "restore":
-        if not Path(st["wallpaper"]).is_file():
-            fallback = STATE_DIR / "fallback.png"
-            if fallback.is_file():
-                st["wallpaper"] = str(fallback)
-            else:
+        # Show a stand-in when the chosen image is unavailable right now (not
+        # downloaded yet, drive not mounted, ...), but never forget the choice.
+        shown = Path(os.path.expanduser(str(st.get("wallpaper", ""))))
+        if not shown.is_file():
+            shown = STATE_DIR / "fallback.png"
+            if not shown.is_file():
                 print("mocha-theme: wallpaper unavailable; keeping compositor background",
                       file=sys.stderr)
-        if Path(st["wallpaper"]).is_file():
-            set_wallpaper(st["wallpaper"], transition=False)
+        if shown.is_file():
+            set_wallpaper(str(shown), transition=False,
+                          remember=str(shown) == st.get("wallpaper"))
         if "accentHex" not in st:
-            st["accent"] = detect_accent(st["wallpaper"]) if st["mode"] == "auto" else st["accent"]
+            st["accent"] = detect_accent(str(shown)) if st["mode"] == "auto" else st["accent"]
         save_state(st)
         apply_all(st)
     elif cmd == "thumbs":

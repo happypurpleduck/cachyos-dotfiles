@@ -14,7 +14,15 @@ with tempfile.TemporaryDirectory() as root_name:
     home.mkdir()
     script = repo / "scripts/first-login.py"
     theme = repo / "common/quickshell/.config/quickshell/scripts/mocha-theme"
-    env = {**os.environ, "HOME": str(home)}
+    # Stub every desktop-touching tool so tests never change the live session.
+    fakebin = root / "bin"
+    fakebin.mkdir()
+    calls = root / "calls"
+    for tool in ("awww", "gsettings", "pkill", "hyprctl"):
+        (fakebin / tool).write_text(f'#!/bin/sh\necho "{tool} $*" >> "{calls}"\n')
+        (fakebin / tool).chmod(0o755)
+    env = {**os.environ, "HOME": str(home), "MOCHA_OFFLINE": "1",
+           "PATH": f"{fakebin}{os.pathsep}{os.environ['PATH']}"}
     env.pop("HYPRLAND_INSTANCE_SIGNATURE", None)
     env.pop("XDG_CONFIG_HOME", None)
     env.pop("XDG_STATE_HOME", None)
@@ -62,5 +70,26 @@ with tempfile.TemporaryDirectory() as root_name:
     data["wallpaper"] = str(alternate)
     state.write_text(json.dumps(data))
     assert json.loads(invoke().stdout)["wallpaper"] == str(alternate)
+
+    # A chosen wallpaper that is briefly unavailable (not downloaded yet,
+    # drive unmounted) is shown as a stand-in but never forgotten, neither by
+    # a reinstall (first-login) nor by the login-time restore.
+    chosen = home / "Pictures/chosen.png"
+    data = json.loads(state.read_text())
+    data["wallpaper"] = str(chosen)
+    state.write_text(json.dumps(data))
+    invoke()
+    assert json.loads(state.read_text())["wallpaper"] == str(chosen)
+    calls.unlink(missing_ok=True)
+    restored = subprocess.run([sys.executable, str(theme), "restore"], env=env,
+                              capture_output=True, text=True)
+    assert restored.returncode == 0, restored.stderr
+    assert json.loads(state.read_text())["wallpaper"] == str(chosen)
+    assert f"awww img {fallback}" in calls.read_text()
+    chosen.parent.mkdir(parents=True)
+    chosen.write_bytes(fallback.read_bytes())
+    subprocess.run([sys.executable, str(theme), "restore"], env=env, check=True,
+                   capture_output=True)
+    assert f"awww img {chosen}" in calls.read_text()
 
 print("offline first-login and fallback themes: OK")
