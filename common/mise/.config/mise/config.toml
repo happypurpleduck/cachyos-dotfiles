@@ -1,6 +1,9 @@
 [tools]
+bun = "latest"
 claude = { version = "latest", minimum_release_age = "8h" }
 codex = { version = "latest", minimum_release_age = "8h" }
 gh = "latest"
+node = "latest"
 opencode = { version = "latest", minimum_release_age = "8h", allow_builds = ["@opencode/cli"] }
+pnpm = "latest"
 rust = "stable"
