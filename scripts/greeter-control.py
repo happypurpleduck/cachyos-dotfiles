@@ -50,6 +50,30 @@ def hash_tree(root: Path) -> str | None:
     return digest.hexdigest()
 
 
+LAUNCHER = r"""#!/bin/sh
+# Mocha greeter launcher, run by greetd as the greeter user.
+# Pin wlroots to the boot GPU: on hybrid NVIDIA + Intel iGPU hosts, cage
+# opening the iGPU as a secondary device aborts inside Mesa, so a monitor
+# on the iGPU kept the greeter from starting. Hyprland still drives every
+# GPU after login. Output goes to the journal: journalctl -t mocha-greeter
+sysfs=${MOCHA_DRM_SYSFS:-/sys/class/drm}
+for card in "$sysfs"/card*; do
+    case ${card##*/} in *-*) continue ;; esac
+    if [ "$(cat "$card/device/boot_vga" 2>/dev/null)" = 1 ]; then
+        export WLR_DRM_DEVICES="/dev/dri/${card##*/}"
+        break
+    fi
+done
+export MOCHA_THEME_FILE=/etc/greetd/mocha-greeter/theme.json
+export XCURSOR_THEME=Adwaita XCURSOR_SIZE=24 QT_QPA_PLATFORM=wayland
+set -- cage -s -m last -- qs -p /etc/greetd/mocha-greeter
+if command -v systemd-cat >/dev/null 2>&1; then
+    exec systemd-cat -t mocha-greeter "$@"
+fi
+exec "$@"
+"""
+
+
 def world_readable_root(root: Path) -> bool:
     # mkdtemp() creates 0700 dirs; greetd runs qs as the unprivileged greeter.
     return root.is_dir() and (root.stat().st_mode & 0o777) == 0o755
@@ -147,6 +171,7 @@ def stage(root: Path, source: Path, home: Path, user: str) -> Path:
         (temp / "greeter.json").write_text(json.dumps({
             "user": user, "face": face, "session": ["start-hyprland"],
         }, indent=2))
+        (temp / "start").write_text(LAUNCHER)
         # Greeter must not need permission to read the owner's home.
         temp.chmod(0o755)
         for file in temp.rglob("*"):
@@ -154,6 +179,7 @@ def stage(root: Path, source: Path, home: Path, user: str) -> Path:
                 file.chmod(0o755)
             elif file.is_file():
                 file.chmod(0o644)
+        (temp / "start").chmod(0o755)
         if not (temp / "greeter.json").is_file() or hash_tree(temp) is None:
             raise ValueError("invalid greeter stage")
         if (world_readable_root(dest)
@@ -181,9 +207,7 @@ def build_config() -> str:
         "# Mocha greeter; recover through dot greeter --rollback TXID from TTY\n"
         "[terminal]\nvt = 1\n\n"
         "[default_session]\n"
-        'command = "env MOCHA_THEME_FILE=/etc/greetd/mocha-greeter/theme.json '
-        'XCURSOR_THEME=Adwaita XCURSOR_SIZE=24 QT_QPA_PLATFORM=wayland '
-        'cage -s -m last -- qs -p /etc/greetd/mocha-greeter"\n'
+        'command = "/etc/greetd/mocha-greeter/start"\n'
         'user = "greeter"\n'
     )
 

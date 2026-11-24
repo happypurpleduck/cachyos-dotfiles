@@ -94,7 +94,34 @@ with tempfile.TemporaryDirectory() as tmp:
     live = fake / "etc/greetd/mocha-greeter"
     assert live.is_dir() and live.joinpath("shell.qml").is_file()
     assert live.stat().st_mode & 0o777 == 0o755, oct(live.stat().st_mode)
-    assert "qs -p /etc/greetd/mocha-greeter" in cfg.read_text()
+    assert 'command = "/etc/greetd/mocha-greeter/start"' in cfg.read_text()
+    launcher = live / "start"
+    assert launcher.stat().st_mode & 0o777 == 0o755, oct(launcher.stat().st_mode)
+
+    # Hybrid GPU: cage must be pinned to the boot_vga card, not the iGPU,
+    # and connector entries (card1-DP-1) must be skipped.
+    sysfs = root / "sysfs-drm"
+    for card, vga in (("card1", "0"), ("card2", "1")):
+        (sysfs / card / "device").mkdir(parents=True)
+        (sysfs / card / "device/boot_vga").write_text(vga + "\n")
+    (sysfs / "card1-DP-1").mkdir()
+    bindir = root / "fakebin"
+    bindir.mkdir()
+    (bindir / "systemd-cat").write_text('#!/bin/sh\nshift 2\nexec "$@"\n')
+    (bindir / "cage").write_text(
+        '#!/bin/sh\nprintf "%s|%s|%s\\n" "$WLR_DRM_DEVICES" '
+        '"$MOCHA_THEME_FILE" "$*"\n')
+    for f in bindir.iterdir():
+        f.chmod(0o755)
+    def launch(**extra):
+        e = {"PATH": f"{bindir}:/usr/bin:/bin", "MOCHA_DRM_SYSFS": str(sysfs), **extra}
+        return subprocess.run(["sh", str(launcher)], env=e, capture_output=True,
+                              text=True, check=True).stdout.strip()
+    assert launch() == ("/dev/dri/card2|/etc/greetd/mocha-greeter/theme.json|"
+                        "-s -m last -- qs -p /etc/greetd/mocha-greeter"), launch()
+    # Without a boot_vga card, wlroots keeps its default device selection.
+    (sysfs / "card2/device/boot_vga").write_text("0\n")
+    assert launch().startswith("|"), launch()
     backups = list((fake / "var/backups/cachyos-dotfiles/greeter").glob("*/journal.json"))
     assert len(backups) == 1, backups
     txid = backups[0].parent.name
@@ -106,9 +133,7 @@ with tempfile.TemporaryDirectory() as tmp:
         "# Mocha greeter; recover through dot greeter --rollback TXID from TTY\n"
         "[terminal]\nvt = 1\n\n"
         "[default_session]\n"
-        'command = "env MOCHA_THEME_FILE=/etc/greetd/mocha-greeter/theme.json '
-        'XCURSOR_THEME=Adwaita XCURSOR_SIZE=24 QT_QPA_PLATFORM=wayland '
-        'cage -s -m last -- qs -p /etc/greetd/mocha-greeter"\n'
+        'command = "/etc/greetd/mocha-greeter/start"\n'
         'user = "greeter"\n'
     )
     run("--rollback", txid)

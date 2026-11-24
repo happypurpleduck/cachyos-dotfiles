@@ -1,6 +1,6 @@
 // Mocha greeter — login screen for greetd, sharing the lock screen's visuals.
 // Installed to /etc/greetd/mocha-greeter by scripts/install-greeter and run as:
-//   cage -s -- qs -p /etc/greetd/mocha-greeter
+//   /etc/greetd/mocha-greeter/start  (cage -s -m last -- qs -p /etc/greetd/mocha-greeter, pinned to the boot GPU)
 //@ pragma Env QS_NO_RELOAD_POPUP=1
 
 import QtQuick
