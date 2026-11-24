@@ -14,6 +14,7 @@ Add more machine-only files with `dot add --host <file>`.
 ## Notes
 
 - Two Samsung C24F390 monitors over HDMI, matched by serial in host.lua: left = workspace 10 (Super+0), right = 1–9.
+- Moondrop Chu 2 (KTMicro CDSP) with the same AutoEq as husain-pc: host.json opts in, the filter itself is shared in `common/pipewire/` (`mocha-autoeq.conf*`, `autoeq/`).
 
 
 ## Multi-machine setup

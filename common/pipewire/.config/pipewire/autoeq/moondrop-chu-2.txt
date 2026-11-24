@@ -1,6 +1,6 @@
 # AutoEq — Moondrop Chu 2, crinacle (Bruel & Kjaer 4620), from jaakkopasanen/AutoEq results.
 # Replace with any autoeq.app "Parametric EQ" export (EqualizerAPO format) and run:
-#   systemctl --user restart filter-chain
+#   systemctl --user restart mocha-filter@mocha-autoeq
 Preamp: -2.5 dB
 Filter 1: ON LSC Fc 105 Hz Gain -5.8 dB Q 0.70
 Filter 2: ON PK Fc 520 Hz Gain 2.6 dB Q 0.80

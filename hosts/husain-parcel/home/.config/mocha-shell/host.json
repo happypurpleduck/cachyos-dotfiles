@@ -1,5 +1,8 @@
 {
   "audio": {
-    "labels": []
+    "labels": [
+      { "match": "KTMicro_CDSP", "sink": "Moondrop Chu 2 (CDSP)", "source": "Chu 2 cable mic" }
+    ],
+    "autoeq": { "file": "~/.config/pipewire/autoeq/moondrop-chu-2.txt", "device": "CDSP" }
   }
 }
