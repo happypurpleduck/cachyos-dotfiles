@@ -108,6 +108,25 @@ with tempfile.TemporaryDirectory() as tmp:
     report = run_dot("status")
     assert "all links ok" in report.stdout, report.stdout
 
+    # An app that rewrites a linked file (save = write new file + rename) must
+    # not have its change reset by dot link: it is kept in the repo source.
+    edited = home_a / path
+    edited.unlink()
+    edited.write_text("changed in the app")
+    absorb_preview = invoke(home_a, "A", "--absorb", "--dry-run")
+    assert "would keep app change: ~/" + path in absorb_preview.stdout
+    assert (repo / "common/editor/.config/editor/settings.conf").read_text() == "shared editor"
+    run_dot("link")
+    assert edited.is_symlink() and edited.read_text() == "changed in the app"
+    assert (repo / "common/editor/.config/editor/settings.conf").read_text() == "changed in the app"
+    (repo / "common/editor/.config/editor/settings.conf").write_text("shared editor")
+    # A stock file at a never-linked target is not pulled into the repo.
+    fresh = root / "home fresh"
+    (fresh / ".config/editor").mkdir(parents=True)
+    (fresh / path).write_text("stock")
+    assert invoke(fresh, "A", "--absorb").stdout == ""
+    assert (repo / "common/editor/.config/editor/settings.conf").read_text() == "shared editor"
+
     # Seeds are copy-once and never overwrite an app-owned file, including
     # subsequent relinks from an existing managed host.
     add("seed/.config/waypaper/config.ini", "seed once")

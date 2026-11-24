@@ -395,6 +395,49 @@ def apply(repo: Path, home: Path, host: str, *, backup_conflicts=False,
     return 0
 
 
+def absorb_app_replaced(repo: Path, home: Path, host: str, *, dry_run=False) -> list[str]:
+    """Keep edits apps made to already-linked files instead of resetting them.
+
+    Some apps save by writing a new file over the symlink. For targets this
+    host previously linked (recorded in its manifest), copy the app's file back
+    into its repo source so the change survives relinking and shows up in
+    dot diff. Stock files from before the first install are never absorbed.
+    """
+    old = read_json(state_path(home, host), {"entries": {}}).get("entries", {})
+    if not isinstance(old, dict):
+        raise ValueError("invalid old manifest entries")
+    desired = {item.path: item.source for item in load_plan(repo, host)}
+    absorbed: list[str] = []
+    for path, old_source in sorted(old.items()):
+        source = desired.get(path)
+        if source is None or Path(old_source).resolve() != Path(source).resolve():
+            continue
+        dest = home / path
+        if dest.is_symlink() or not dest.is_file():
+            continue
+        if not safe_managed_source(Path(source).resolve(), repo, host):
+            continue
+        verify_no_parent_symlinks(home, dest)
+        absorbed.append(path)
+        if dry_run:
+            continue
+        data = dest.read_bytes()
+        if data != Path(source).read_bytes():
+            fd, tmp = tempfile.mkstemp(prefix=".dot-absorb-", dir=Path(source).parent)
+            try:
+                with os.fdopen(fd, "wb") as stream:
+                    stream.write(data)
+                shutil.copymode(source, tmp)
+                os.replace(tmp, source)
+            finally:
+                if os.path.lexists(tmp):
+                    os.unlink(tmp)
+        link = dest.with_name(f".dot-relink-{uuid4().hex[:8]}")
+        os.symlink(os.path.relpath(source, dest.parent), link)
+        os.replace(link, dest)
+    return absorbed
+
+
 def install_preflight(repo: Path, home: Path, host: str) -> int:
     """Read-only concise summary for first-install collisions and unsafe targets."""
     _, _, actions, unsafe = inspect(repo, home, host, True, False)
@@ -438,6 +481,8 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--rollback", metavar="TXID")
     parser.add_argument("--check-retired", action="store_true")
+    parser.add_argument("--absorb", action="store_true",
+                        help="copy app-rewritten managed files back into the repo and relink")
     parser.add_argument("--install-preflight", action="store_true",
                         help="read-only concise collision summary")
     args = parser.parse_args()
@@ -450,6 +495,10 @@ def main() -> int:
             if args.unlink or args.rollback or args.backup_conflicts or args.dry_run:
                 raise ValueError("install preflight cannot be combined with link actions")
             return install_preflight(repo, home, args.host)
+        if args.absorb:
+            for path in absorb_app_replaced(repo, home, args.host, dry_run=args.dry_run):
+                print(f"   {'would keep' if args.dry_run else 'kept'} app change: ~/{path}")
+            return 0
         if args.check_retired:
             retired = retired_links(repo, home, args.host)
             for entry in retired:

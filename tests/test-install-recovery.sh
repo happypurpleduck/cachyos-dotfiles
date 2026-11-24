@@ -42,6 +42,8 @@ if "--install-preflight" in sys.argv:
         print("Link preflight: 2 existing home config files conflict")
         raise SystemExit(3)
     print("Link preflight: no collisions")
+elif "--absorb" in sys.argv:
+    (home / "absorb-invoked").write_text("yes")
 elif "--dry-run" in sys.argv:
     print("Dry run: no files changed")
 elif os.environ.get("SIMULATE_LINK_FAIL") == "1":

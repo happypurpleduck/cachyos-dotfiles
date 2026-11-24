@@ -88,6 +88,9 @@ cmd_link() {
       --home "$HOME" --dry-run
     return
   fi
+  # Keep edits apps made to linked files (they'd otherwise be reset).
+  python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" \
+    --home "$HOME" --absorb
   # The Python linker includes first-use seeds in the same verified transaction.
   # Keep its exit status even when cmd_link runs inside an if/command substitution.
   python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" \
@@ -497,6 +500,10 @@ cmd_install() {
     die "usage: dot install [--dry-run|--apply-system]"
   fi
   [ -d "$HOSTDIR/home" ] || die "create hosts/$HOST first with dot new-host"
+  # Keep app edits to already-linked files before planning, so reinstalling
+  # never resets settings changed through an app's own UI.
+  python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" \
+    --home "$HOME" --absorb || die "could not keep app-edited config files"
   # Optional groups are chosen with dot optional, not polled on each install.
   python3 "$DOT/scripts/package-audit.py" --repo "$DOT" --host "$HOST" ||
     die "package prerequisites unavailable"
