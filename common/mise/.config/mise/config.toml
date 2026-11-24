@@ -3,7 +3,20 @@ bun = "latest"
 claude = { version = "latest", minimum_release_age = "8h" }
 codex = { version = "latest", minimum_release_age = "8h" }
 gh = "latest"
+java = "temurin-17"      # JDK 17 for Android/Gradle (React Native, Expo)
 node = "latest"
 opencode = { version = "latest", minimum_release_age = "8h", allow_builds = ["@opencode/cli"] }
 pnpm = "latest"
 rust = "stable"
+
+# Android SDK lives at the standard ~/Android/Sdk (Android Studio's default, which
+# T3 Code's Device panel also finds), installed by android-sdk-setup. mise's own
+# android-sdk tool would version the whole SDK root, re-downloading ~2 GB of
+# emulator/system images on every cmdline-tools bump. JAVA_HOME comes from java above.
+[env]
+ANDROID_HOME = "{{env.HOME}}/Android/Sdk"
+_.path = [
+  "{{env.HOME}}/Android/Sdk/platform-tools",
+  "{{env.HOME}}/Android/Sdk/emulator",
+  "{{env.HOME}}/Android/Sdk/cmdline-tools/latest/bin",
+]

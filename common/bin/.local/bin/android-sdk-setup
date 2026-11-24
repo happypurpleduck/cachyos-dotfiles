@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+# android-sdk-setup — user-local Android SDK + emulator for React Native / Expo.
+#
+# No sudo and no AUR. Installs Google's official command-line tools into
+# $ANDROID_HOME (default ~/Android/Sdk), then uses sdkmanager for:
+# platform-tools, emulator, what React Native builds against (platform 36,
+# build-tools, NDK, CMake), the newest stable Google Play
+# x86_64 system image, and an AVD to go with it. Running it again is safe: it
+# skips what's already there and only adds a newer API when you ask for one.
+#
+# Everything else is mise: JDK 17 (java = "temurin-17"; projects pin their own in
+# mise.toml), and ANDROID_HOME/PATH from [env] in ~/.config/mise/config.toml.
+# T3 Code's Device panel finds ~/Android/Sdk on its own.
+#
+#   android-sdk-setup                 install/repair everything, create the AVD
+#   android-sdk-setup --api 36        pin an API level instead of the newest stable
+#   android-sdk-setup --status        show what's installed, change nothing
+#
+# Env overrides: ANDROID_HOME, AVD_NAME (default pixel), AVD_DEVICE (default pixel_8),
+# ANDROID_IMAGE_TAG (default google_apis_playstore; use google_apis for a rootable image).
+set -euo pipefail
+
+SDK=${ANDROID_HOME:-$HOME/Android/Sdk}
+AVD_NAME=${AVD_NAME:-pixel}
+AVD_DEVICE=${AVD_DEVICE:-pixel_8}
+IMAGE_TAG=${ANDROID_IMAGE_TAG:-google_apis_playstore}
+REPO_XML=https://dl.google.com/android/repository/repository2-3.xml
+API=""
+STATUS=0
+
+say() { printf '\033[1;35m::\033[0m %s\n' "$*"; }
+die() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+
+while [ $# -gt 0 ]; do
+  case $1 in
+    --api) API=${2:?--api needs a level}; shift 2 ;;
+    --status) STATUS=1; shift ;;
+    -h|--help) awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0"; exit 0 ;;
+    *) die "unknown argument: $1" ;;
+  esac
+done
+
+SDKMANAGER=$SDK/cmdline-tools/latest/bin/sdkmanager
+AVDMANAGER=$SDK/cmdline-tools/latest/bin/avdmanager
+
+java_home() {
+  # Prefer JAVA_HOME if it is a JDK 17+, else mise's temurin-17.
+  if [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/java" ]; then echo "$JAVA_HOME"; return; fi
+  command -v mise >/dev/null && mise where java@temurin-17 2>/dev/null && return
+  return 1
+}
+
+if [ "$STATUS" = 1 ]; then
+  echo "ANDROID_HOME: $SDK"
+  echo "JAVA_HOME:    $(java_home || echo 'missing (mise install java)')"
+  [ -x "$SDKMANAGER" ] || { echo "cmdline-tools: missing"; exit 0; }
+  JAVA_HOME=$(java_home) "$SDKMANAGER" --sdk_root="$SDK" --list_installed 2>/dev/null | sed -n '/^  [a-z]/p'
+  echo "AVDs:"; "$SDK/emulator/emulator" -list-avds 2>/dev/null | sed 's/^/  /'
+  exit 0
+fi
+
+# ── JDK ─────────────────────────────────────────────────────────────────────
+if ! JAVA_HOME=$(java_home); then
+  command -v mise >/dev/null || die "mise not found (dot apps install mise)"
+  say "installing JDK 17 (mise: java@temurin-17)"
+  mise install java@temurin-17
+  JAVA_HOME=$(mise where java@temurin-17)
+fi
+export JAVA_HOME
+"$JAVA_HOME/bin/java" -version 2>&1 | head -1
+
+# ── command-line tools (bootstraps sdkmanager) ──────────────────────────────
+if [ ! -x "$SDKMANAGER" ]; then
+  say "fetching Android command-line tools from dl.google.com"
+  tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+  curl -fsSL "$REPO_XML" -o "$tmp/repo.xml"
+  read -r zip sha1 < <(python3 -I - "$tmp/repo.xml" <<'PY'
+import sys, xml.etree.ElementTree as ET
+root = ET.parse(sys.argv[1]).getroot()
+for pkg in root.iter("remotePackage"):
+    if pkg.get("path") != "cmdline-tools;latest":
+        continue
+    for arch in pkg.iter("archive"):
+        if (arch.findtext("host-os") or "") == "linux":
+            c = arch.find("complete")
+            print(c.findtext("url"), c.findtext("checksum"))
+            sys.exit(0)
+sys.exit("cmdline-tools;latest for linux not found in repository XML")
+PY
+  )
+  case $zip in commandlinetools-linux-*.zip) ;; *) die "unexpected archive name: $zip" ;; esac
+  curl -fSL --progress-bar "https://dl.google.com/android/repository/$zip" -o "$tmp/tools.zip"
+  echo "$sha1  $tmp/tools.zip" | sha1sum -c --quiet - || die "checksum mismatch for $zip"
+  mkdir -p "$tmp/x" "$SDK/cmdline-tools"
+  bsdtar -xf "$tmp/tools.zip" -C "$tmp/x" 2>/dev/null || python3 -I -m zipfile -e "$tmp/tools.zip" "$tmp/x"
+  chmod +x "$tmp"/x/cmdline-tools/bin/*
+  rm -rf "$SDK/cmdline-tools/latest"
+  mv "$tmp/x/cmdline-tools" "$SDK/cmdline-tools/latest"
+fi
+
+sdk() { "$SDKMANAGER" --sdk_root="$SDK" "$@"; }
+
+# Older sdkmanager needs licenses accepted up front (Gradle checks them before
+# fetching NDK/CMake); cmdline-tools 23+ says it is no longer needed.
+yes | sdk --licenses >/dev/null 2>&1 || true
+
+# ── pick versions ───────────────────────────────────────────────────────────
+# sdkmanager <23 prints "build-tools;36.0.0 | …", 23+ prints "build-tools/36.0.0 …";
+# keep the first column and use whichever separator this sdkmanager speaks.
+list=$(sdk --list 2>/dev/null | awk '/^  [a-z]/ {sub(/\|.*/, ""); print $1}' | sort -u)
+grep -q '^platform-tools$' <<<"$list" || die "could not read the package list from sdkmanager"
+sep=';'; grep -q '^build-tools/' <<<"$list" && sep='/'
+pkg() { local IFS=$sep; echo "$*"; }
+
+# What React Native / Expo builds against (react-native/gradle/libs.versions.toml,
+# RN 0.86). Gradle downloads anything else it wants, but having these up front
+# keeps the first `expo run:android` from stalling.
+COMPILE_API=${ANDROID_COMPILE_API:-36}
+BUILD_TOOLS=${ANDROID_BUILD_TOOLS:-36.0.0}
+NDK=${ANDROID_NDK:-27.1.12297006}
+CMAKE=${ANDROID_CMAKE:-3.22.1}
+
+if [ -z "$API" ]; then
+  # newest stable image: android-NN or android-NN.N (no -ext, -beta, ps16k)
+  API=$(grep -E "^system-images[;/]android-[0-9]+(\.[0-9]+)?[;/]$IMAGE_TAG[;/]x86_64$" <<<"$list" \
+        | sed -E 's/^system-images[;/]android-([0-9.]+).*/\1/' | sort -V | tail -1)
+  [ -n "$API" ] || die "no x86_64 $IMAGE_TAG image found"
+fi
+IMAGE=$(pkg system-images "android-$API" "$IMAGE_TAG" x86_64)
+want=(platform-tools emulator "$(pkg platforms "android-$COMPILE_API")" "$(pkg platforms "android-$API")"
+      "$(pkg build-tools "$BUILD_TOOLS")" "$(pkg ndk "$NDK")" "$(pkg cmake "$CMAKE")" "$IMAGE")
+
+say "installing ${want[*]}"
+sdk --install "${want[@]}"
+
+# ── AVD ─────────────────────────────────────────────────────────────────────
+if "$SDK/emulator/emulator" -list-avds 2>/dev/null | grep -qx "$AVD_NAME"; then
+  say "AVD '$AVD_NAME' already exists (delete with: avdmanager delete avd -n $AVD_NAME)"
+else
+  "$AVDMANAGER" list device -c 2>/dev/null | grep -qx "$AVD_DEVICE" || AVD_DEVICE=pixel_7
+  say "creating AVD '$AVD_NAME' ($AVD_DEVICE, API $API)"
+  # avdmanager only accepts ";" package paths, even where sdkmanager prints "/"
+  echo no | "$AVDMANAGER" create avd -n "$AVD_NAME" -k "${IMAGE//\//;}" -d "$AVD_DEVICE" >/dev/null
+  cfg=$HOME/.android/avd/$AVD_NAME.avd/config.ini
+  # hardware keyboard, GPU on the host, enough RAM/storage for a dev client build
+  for kv in hw.keyboard=yes hw.gpu.enabled=yes hw.gpu.mode=auto hw.ramSize=4096 \
+            disk.dataPartition.size=8G vm.heapSize=512 fastboot.forceColdBoot=no; do
+    k=${kv%%=*}; sed -i "/^$k *=/d" "$cfg"; echo "$k=${kv#*=}" >>"$cfg"
+  done
+fi
+
+[ -w /dev/kvm ] || echo "warning: /dev/kvm not writable; the emulator will be very slow (check virtualization in firmware)" >&2
+
+say "done. ANDROID_HOME=$SDK  JAVA_HOME=$JAVA_HOME"
+echo "   start it:  emulator -avd $AVD_NAME    (or from T3 Code's Device panel)"
+echo "   ANDROID_HOME/JAVA_HOME/PATH come from mise (open a new shell, or: mise env)"
