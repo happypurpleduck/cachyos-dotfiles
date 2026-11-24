@@ -7,7 +7,7 @@ What's specific to this machine. Linked on top of `common/` by `dot link`.
 | `home/.config/hypr/host.lua` | monitors, workspace→monitor rules, GPU env vars, autostart apps |
 | `home/.config/mocha-shell/host.json` | audio device names, AutoEq target, mic for noise suppression |
 | `packages.txt` / `aur.txt` | packages beyond `packages/common.txt` (`dot packages` snapshots them) |
-| `setup` | optional script run at the end of `dot install` |
+| `setup` | static LAN IP 192.168.100.75/24 (gw .1) + DNS 1.1.1.1 on eno1 via nmcli; run `dot host-setup --apply` |
 
 Add more machine-only files with `dot add --host <file>`.
 

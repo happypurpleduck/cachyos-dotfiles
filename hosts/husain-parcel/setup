@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# husain-parcel host setup (run with: dot host-setup --apply). Idempotent.
+#
+# Static LAN address on the wired NIC with Cloudflare DNS instead of the
+# router's DHCP lease/DNS. NetworkManager changes go through polkit, no sudo.
+set -euo pipefail
+
+IFACE=eno1
+ADDRESS=192.168.100.75/24
+GATEWAY=192.168.100.1
+DNS=1.1.1.1
+
+con=$(nmcli -g GENERAL.CONNECTION device show "$IFACE" 2>/dev/null || true)
+if [ -z "$con" ]; then
+  con=$(nmcli -t -f NAME,TYPE connection show | awk -F: '$2=="802-3-ethernet"{print $1; exit}')
+fi
+[ -n "$con" ] || { echo "setup: no ethernet connection found for $IFACE" >&2; exit 1; }
+
+current=$(nmcli -g ipv4.method,ipv4.addresses,ipv4.gateway,ipv4.dns,ipv4.ignore-auto-dns connection show "$con" | paste -sd'|')
+wanted="manual|$ADDRESS|$GATEWAY|$DNS|yes"
+if [ "$current" = "$wanted" ]; then
+  echo "setup: $con already $ADDRESS via $GATEWAY, dns $DNS"
+  exit 0
+fi
+
+echo "setup: $con -> $ADDRESS via $GATEWAY, dns $DNS"
+nmcli connection modify "$con" \
+  connection.interface-name "$IFACE" \
+  ipv4.method manual \
+  ipv4.addresses "$ADDRESS" \
+  ipv4.gateway "$GATEWAY" \
+  ipv4.dns "$DNS" \
+  ipv4.ignore-auto-dns yes
+nmcli connection up "$con"
