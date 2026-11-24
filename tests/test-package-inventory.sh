@@ -14,18 +14,18 @@ printf 'git\n' > "$repo/packages/common.txt"
 printf 'hokum-bin\n' > "$repo/packages/aur.txt"
 printf 'firefox\n' > "$repo/hosts/A/packages.txt"
 printf 'google-chrome\n' > "$repo/hosts/A/aur.txt"
-cat > "$bin/pacman" <<'SH'
+cat > "$bin/shelly" <<'SH'
 #!/bin/sh
-case "$1" in
-  -Qqen) printf 'git\nfirefox\nzed\nsome-tool\n' ;;
-  -Qqem) printf 'google-chrome\nunapproved-aur\nmise\n' ;;
+case "$*" in
+  "list standard --explicitOnly --names-only")
+    printf 'git\nfirefox\nzed\nsome-tool\ngoogle-chrome\nunapproved-aur\nmise\n' ;;
+  "list aur --explicitOnly --names-only") printf 'google-chrome\nunapproved-aur\nmise\n' ;;
   *) exit 1 ;;
 esac
 SH
-chmod +x "$bin/pacman" "$repo/common/bin/.local/bin/dot"
+chmod +x "$bin/shelly" "$repo/common/bin/.local/bin/dot"
 export HOME="$home" DOT_HOST=A PATH="$bin:$PATH"
 unset DOTFILES
-printf 'A\n' | "$repo/common/bin/.local/bin/dot" confirm-host >/dev/null
 before_repo=$(sha256sum "$repo/hosts/A/packages.txt")
 before_foreign=$(sha256sum "$repo/hosts/A/aur.txt")
 "$repo/common/bin/.local/bin/dot" packages >"$tmp/observed" 2>"$tmp/warnings"
@@ -35,4 +35,6 @@ grep -q 'mise/Zed already package-managed' "$tmp/warnings"
 [ "$(sha256sum "$repo/hosts/A/packages.txt")" = "$before_repo" ]
 [ "$(sha256sum "$repo/hosts/A/aur.txt")" = "$before_foreign" ]
 ! grep -q unapproved-aur "$repo/hosts/A/aur.txt"
+# AUR packages are reported once, as foreign, not again as repository extras.
+[ "$(grep -c unapproved-aur "$tmp/observed")" -eq 1 ]
 echo 'read-only package inventory leaves reviewed requirements untouched: OK'

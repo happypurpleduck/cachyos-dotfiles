@@ -2,7 +2,7 @@
 """Install user-owned self-updating apps from their FIRST-PARTY Linux installers.
 
 Never runs during dot install or package audit. Invoking dot apps install NAME
-explicitly opts in to executing the vendor-maintained installer. Use pacman
+explicitly opts in to executing the vendor-maintained installer. Use Shelly
 for system dependencies, not for these self-managed application binaries.
 """
 from __future__ import annotations

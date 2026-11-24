@@ -32,7 +32,7 @@ SHARED_DIRS=(
 say() { printf '\033[1;35m::\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
 die() { printf '\033[1;31m!!\033[0m %s\n' "$*" >&2; exit 1; }
-need() { command -v "$1" >/dev/null || die "$1 is not installed (sudo pacman -S $2)"; }
+need() { command -v "$1" >/dev/null || die "$1 is not installed (shelly install standard $2)"; }
 
 # Do not allow accidental traversal into a different host directory, and make
 # mistakes in DOTFILES fail early instead of touching an unintended checkout.
@@ -42,38 +42,6 @@ case "$HOST" in .|..|_template) die "cannot activate reserved host: $HOST" ;; es
 if [ "$HOST" != "$SYSTEM_HOST" ]; then
   warn "DOT_HOST selects $HOST (system hostname: $SYSTEM_HOST); using that profile intentionally"
 fi
-
-# Explicit one-time machine/profile enrollment, stored locally (not in Git).
-HOST_ID_FILE="$HOME/.local/state/cachyos-dotfiles/confirmed-host"
-host_identity() {
-  [ -s /etc/machine-id ] || die "missing /etc/machine-id: cannot confirm host identity"
-  printf '%s:%s\n' "$HOST" "$(sha256sum /etc/machine-id | awk '{print $1}')"
-}
-check_host_identity() {
-  [ -f "$HOST_ID_FILE" ] && [ ! -L "$HOST_ID_FILE" ] &&
-    [ "$(cat "$HOST_ID_FILE")" = "$(host_identity)" ] && return 0
-  die "host profile $HOST is not confirmed for this machine; run dot confirm-host"
-}
-cmd_confirm_host() {
-  local answer temp
-  [ -d "$HOSTDIR/home" ] || die "create hosts/$HOST first with dot new-host"
-  if [ -f "$HOST_ID_FILE" ] && [ ! -L "$HOST_ID_FILE" ] &&
-     [ "$(cat "$HOST_ID_FILE")" = "$(host_identity)" ]; then
-    say "host profile $HOST is already confirmed on this machine"
-    return 0
-  fi
-  say "selected profile: hosts/$HOST (system hostname: $SYSTEM_HOST)"
-  say "confirm only after checking this machine's monitors, GPU, audio and packages"
-  read -r -p "Type $HOST to authorize this physical machine: " answer
-  [ "$answer" = "$HOST" ] || die "host confirmation cancelled"
-  [ ! -L "$HOST_ID_FILE" ] || die "refusing symlinked host-selection state"
-  umask 077
-  mkdir -p -- "$(dirname "$HOST_ID_FILE")"
-  temp=$(mktemp "$(dirname "$HOST_ID_FILE")/.host-XXXXXXXX")
-  host_identity > "$temp"
-  mv -f -- "$temp" "$HOST_ID_FILE"
-  say "confirmed hosts/$HOST on this machine (local state only)"
-}
 
 common_pkgs() { (cd "$DOT/common" && for d in */; do echo "${d%/}"; done); }
 has_host() { [ -d "$HOSTDIR/home" ]; }
@@ -120,7 +88,6 @@ cmd_link() {
       --home "$HOME" --dry-run
     return
   fi
-  check_host_identity
   # The Python linker includes first-use seeds in the same verified transaction.
   # Keep its exit status even when cmd_link runs inside an if/command substitution.
   python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" \
@@ -128,21 +95,18 @@ cmd_link() {
 }
 
 cmd_unlink() {
-  check_host_identity
   need python3 python
   python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" \
     --home "$HOME" --unlink "$@"
 }
 
 cmd_migrate_folded() {
-  check_host_identity
   need python3 python
   python3 "$DOT/scripts/migrate-folded.py" --repo "$DOT" --host "$HOST" \
     --home "$HOME" "$@"
 }
 
 cmd_rollback() {
-  check_host_identity
   [ "$#" -eq 1 ] || die "usage: dot rollback <transaction-id>"
   need python3 python
   python3 "$DOT/scripts/dot-links.py" --repo "$DOT" --host "$HOST" \
@@ -250,7 +214,6 @@ cmd_diff() {
 }
 
 cmd_save() {
-  check_host_identity
   local allow_staged=0
   if [ "${1:-}" = "--allow-staged" ]; then
     allow_staged=1
@@ -293,7 +256,6 @@ cmd_save() {
 }
 
 cmd_pull() {
-  check_host_identity
   local consent=() remote_sha
   case "${1:-}" in
     "") [ "$#" -eq 0 ] || die "usage: dot pull [--apply]" ;;
@@ -351,7 +313,6 @@ opt_pkgs() {
 # dot optional <group>…   install these groups
 # dot optional --list     show groups and this machine's answers
 cmd_optional() {
-  check_host_identity
   [ -d "$HOSTDIR" ] || die "no hosts/$HOST (dot new-host)"
   local g a st ask_all=0 picked=()
   case ${1:-} in
@@ -378,18 +339,20 @@ cmd_optional() {
 }
 
 cmd_packages() {
-  check_host_identity
-  need pacman pacman
+  need shelly shelly
   [ -d "$HOSTDIR" ] || die "no hosts/$HOST (dot new-host)"
-  local desired_repo desired_foreign native_extra foreign_extra
+  local desired_repo desired_foreign native_extra foreign_extra explicit_all explicit_aur
   # Inspection is NOT adoption. Existing-machine packages may be historical,
   # vendor self-managed, locally built, or irrelevant to another machine.
   desired_repo=$( (pkglist "$DOT/packages/common.txt";
                    pkglist "$HOSTDIR/packages.txt"; opt_pkgs) | sort -u)
   desired_foreign=$( (pkglist "$DOT/packages/aur.txt";
                       pkglist "$HOSTDIR/aur.txt"; opt_pkgs aur) | sort -u)
-  native_extra=$(comm -23 <(pacman -Qqen | sort -u) <(printf '%s\n' "$desired_repo" | sort -u))
-  foreign_extra=$(comm -23 <(pacman -Qqem | sort -u) <(printf '%s\n' "$desired_foreign" | sort -u))
+  explicit_all=$(shelly list standard --explicitOnly --names-only | sort -u)
+  explicit_aur=$(shelly list aur --explicitOnly --names-only | sort -u)
+  native_extra=$(comm -23 <(comm -23 <(printf '%s\n' "$explicit_all") <(printf '%s\n' "$explicit_aur")) \
+    <(printf '%s\n' "$desired_repo" | sort -u))
+  foreign_extra=$(comm -23 <(printf '%s\n' "$explicit_aur") <(printf '%s\n' "$desired_foreign" | sort -u))
   say "read-only installed-package inventory for $HOST (NOT adopted into host manifests)"
   printf '\n:: installed repository packages outside explicit dotfiles requirements:\n%s\n' "$native_extra"
   printf '\n:: installed foreign/local packages outside explicit dotfiles requirements:\n%s\n' "$foreign_extra"
@@ -402,10 +365,9 @@ cmd_packages() {
 }
 
 cmd_install_packages() {
-  check_host_identity
   need python3 python
-  # Declared packages are the owner's choices. The package audit still
-  # rejects any AUR package outside the explicit reviewed allowlist.
+  # Declared packages are installed via Shelly without prompts. The package
+  # audit still rejects any AUR package outside the reviewed allowlist.
   local missing_aur
   missing_aur=$(python3 "$DOT/scripts/package-audit.py" --repo "$DOT" --host "$HOST" --json |
     python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["missing_aur"]))') ||
@@ -414,14 +376,13 @@ cmd_install_packages() {
     say "installing declared AUR exceptions via Shelly: $missing_aur"
   fi
   python3 "$DOT/scripts/package-audit.py" --repo "$DOT" --host "$HOST" \
-    --install --approve-aur --non-interactive
+    --install
 }
 
 cmd_greeter() {
   need python3 python
   case "${1:-}" in
     --stage | --activate | --install | --rollback)
-      check_host_identity
       sudo python3 "$DOT/scripts/greeter-control.py" --home "$HOME" \
         --source "$HOME/.config/quickshell" --user "$(id -un)" "$@"
       ;;
@@ -436,10 +397,6 @@ cmd_greeter() {
 # bootstrapped as part of the full desktop installation.
 cmd_services() {
   need python3 python
-  local arg
-  for arg in "$@"; do
-    if [ "$arg" = "--apply" ]; then check_host_identity; break; fi
-  done
   python3 "$DOT/scripts/host-services.py" --repo "$DOT" --host "$HOST" "$@"
 }
 
@@ -461,7 +418,6 @@ cmd_system_setup() {
       ;;
     --apply)
       [ "$#" -eq 1 ] || die "usage: dot system-setup [--apply]"
-      check_host_identity
       sudo "$DOT/system/setup" --apply
       ;;
     *) die "usage: dot system-setup [--apply]" ;;
@@ -531,7 +487,6 @@ cmd_install() {
     say "Mocha greeter will be staged and enabled for next boot (existing DM backed up)"
     return
   fi
-  check_host_identity
   local apply_system=0 a link_output link_txid="" link_preflight_status=0
   local -a link_args=()
   INSTALL_NEWLY_ENABLED=()
@@ -541,7 +496,7 @@ cmd_install() {
   elif [ "$#" -ne 0 ]; then
     die "usage: dot install [--dry-run|--apply-system]"
   fi
-  [ -d "$HOSTDIR/home" ] || die "create hosts/$HOST and run dot confirm-host first"
+  [ -d "$HOSTDIR/home" ] || die "create hosts/$HOST first with dot new-host"
   # Optional groups are chosen with dot optional, not polled on each install.
   python3 "$DOT/scripts/package-audit.py" --repo "$DOT" --host "$HOST" ||
     die "package prerequisites unavailable"
@@ -642,9 +597,8 @@ cmd_install() {
   say "recovery link transaction: ${link_txid:-none (no changes)}"
 }
 
-# Host-specific executable setup scripts must be reviewed and explicitly run.
+# Host-specific executable setup scripts are previewed unless --apply is given.
 cmd_host_setup() {
-  check_host_identity
   [ -x "$HOSTDIR/setup" ] || { say "no host setup script selected"; return 0; }
   say "host setup script: $HOSTDIR/setup"
   if [ "${1:-}" != "--apply" ]; then
@@ -652,9 +606,6 @@ cmd_host_setup() {
     return 0
   fi
   [ "$#" -eq 1 ] || die "usage: dot host-setup [--apply]"
-  local consent
-  read -r -p "Type RUN HOST SETUP to execute the selected script: " consent
-  [ "$consent" = "RUN HOST SETUP" ] || die "host setup not authorized"
   "$HOSTDIR/setup"
 }
 
@@ -667,14 +618,13 @@ cmd_new_host() {
   { [ -e "$DOT/hosts/$name" ] || [ -L "$DOT/hosts/$name" ]; } && die "hosts/$name already exists"
   cp -r "$DOT/hosts/_template" "$DOT/hosts/$name"
   sed -i "s/HOSTNAME/$name/g" "$DOT/hosts/$name/README.md" "$DOT/hosts/$name/home/.config/hypr/host.lua"
-  say "created hosts/$name — review its host.lua and host.json, then run ./install to confirm and activate"
+  say "created hosts/$name — review its host.lua and host.json, then run ./install to activate"
 }
 
 # dot add [--host] <path>… — preview and copy files; never move HOME files.
 #   common package = first directory under ~/.config (or the file name for dotfiles in ~)
 # Safe import: preview by default; a copy does not publish or relink.
 cmd_add() {
-  check_host_identity
   need python3 python
   local args=() arg
   for arg in "$@"; do
@@ -696,11 +646,11 @@ dot — $DOT on $HOST
   dot install --apply-system  explicitly include limited PAM/DDC system setup
   dot system-setup [--apply]  preview or apply limited PAM/DDC setup
   dot greeter [--stage|--install|--activate|--rollback TXID]  safe login-manager control
-  dot host-setup [--apply]    preview or explicitly run this host's setup script
-  dot services                read-only host system service (Bluetooth) status
-  dot services --apply --confirm 'ENABLE HOST SERVICES'  explicit activation
+  dot host-setup [--apply]    preview or run this host's setup script
+  dot services                read-only host system service status
+  dot services --apply        enable/start this host's selected system services
   dot apps status             first-party mise/Zed install type and update policy
-  dot apps install mise zed   explicit vendor installer bootstraps (no pacman/AUR)
+  dot apps install mise zed   explicit vendor installer bootstraps (no Shelly/AUR)
   dot apps update mise        use mise self-update; Zed updates on restart
   dot assets --status          inspect optional downloads without network
   dot assets --asset t3code    fetch one optional asset (use --force to refresh)
@@ -725,7 +675,6 @@ dot — $DOT on $HOST
   dot optional [grp…]  optional apps: ask about new groups, or install the named ones
                        (--list shows them, --ask asks about all of them again)
   dot new-host [name]  start hosts/<name> from hosts/_template
-  dot confirm-host      bind this machine to the selected profile (before mutations)
   dot cd               print the repo path (cd "\$(dot cd)")
 EOF
 }
@@ -753,7 +702,6 @@ case ${1:-help} in
   install-packages) cmd_install_packages ;;
   optional | opt) shift; cmd_optional "$@" ;;
   new-host) shift; cmd_new_host "${1:-}" ;;
-  confirm-host) cmd_confirm_host ;;
   cd | path) echo "$DOT" ;;
   help | -h | --help) cmd_help ;;
   *) cmd_help; exit 1 ;;

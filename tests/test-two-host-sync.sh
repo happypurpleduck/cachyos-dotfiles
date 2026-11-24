@@ -29,8 +29,6 @@ for host in A B; do
   git -C "$tmp/$host" config user.name CI
   git -C "$tmp/$host" config user.email ci@example.invalid
   mkdir -p "$tmp/home-$host"
-  printf '%s\n' "$host" | env -u DOTFILES HOME="$tmp/home-$host" DOT_HOST="$host" \
-    "$tmp/$host/common/bin/.local/bin/dot" confirm-host >/dev/null 2>&1
 done
 
 dot_for() {

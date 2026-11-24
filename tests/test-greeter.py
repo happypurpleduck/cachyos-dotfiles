@@ -84,8 +84,8 @@ with tempfile.TemporaryDirectory() as tmp:
     assert json.loads((stage / "theme.json").read_text())["accentHex"] == "#89b4fa"
     assert cfg.read_bytes() == before and not mutations()
 
-    run("--activate", "--confirm", "ACTIVATE greetd", good=False)
-    run("--activate", "--confirm", "ACTIVATE greetd",
+    run("--activate", good=False)
+    run("--activate",
         "--replace-display-manager", good=True)
     # Live running login wasn't restarted; enablement switches on next boot.
     assert "restart" not in calls.read_text()
@@ -148,13 +148,13 @@ with tempfile.TemporaryDirectory() as tmp:
     cfg.write_text("existing greetd config\n")
     prior = cfg.read_bytes()
     env["MOCK_FAIL_GREETD"] = "1"
-    run("--activate", "--confirm", "ACTIVATE greetd", good=False)
+    run("--activate", good=False)
     env.pop("MOCK_FAIL_GREETD")
     assert service_state.read_text().strip() == "greetd.service"
     assert cfg.read_bytes() == prior
 
     # Successful reactivation followed by explicit rollback also keeps greetd.
-    run("--activate", "--confirm", "ACTIVATE greetd")
+    run("--activate")
     journals = sorted((fake / "var/backups/cachyos-dotfiles/greeter").glob("*/journal.json"))
     current = [j for j in journals if json.loads(j.read_text())["status"] == "active"]
     assert len(current) == 1

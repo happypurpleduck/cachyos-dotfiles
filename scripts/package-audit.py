@@ -96,42 +96,37 @@ def read_packages_allow_aur(path: Path) -> set[str]:
 
 def query(args: list[str]) -> set[str]:
     return set(subprocess.run(args, check=True, capture_output=True,
-                              text=True, timeout=60).stdout.splitlines())
+                              text=True, timeout=120).stdout.splitlines())
 
 
 def audit(repo: Path, host: str) -> dict:
     required, aur = requirements(repo, host)
-    pacman = shutil.which("pacman")
-    if not pacman:
+    # Shelly is the only package backend: queries and installs alike.
+    shelly = shutil.which("shelly")
+    if not shelly:
         return {
-            "status": "pacman-unavailable", "desired_repo": sorted(required),
+            "status": "shelly-unavailable", "desired_repo": sorted(required),
             "desired_aur": sorted(aur), "missing_repo": [], "missing_aur": [],
-            "unavailable_repo": [], "aur_helper": None, "blocking": True,
+            "unavailable_repo": [], "shelly": None, "blocking": True,
         }
-    installed = query([pacman, "-Qq"])
-    repo_available = query([pacman, "-Slq"])
+    installed = query([shelly, "list", "standard", "--names-only"])
+    repo_available = query([shelly, "search", "standard", "--available", "--names-only"])
     missing_repo = sorted(required - installed)
     missing_aur = sorted(aur - installed)
     unavailable = sorted(set(missing_repo) - repo_available)
-    # CachyOS Shelly is the only supported AUR backend.
-    helper = shutil.which("shelly")
     return {
         "status": "ok", "desired_repo": sorted(required),
         "desired_aur": sorted(aur), "missing_repo": missing_repo,
         "missing_aur": missing_aur, "unavailable_repo": unavailable,
-        "aur_helper": helper,
-        "blocking": bool(unavailable or (missing_aur and not helper)),
+        "shelly": shelly, "blocking": bool(unavailable),
     }
 
 
-def aur_install_command(helper: str, packages: list[str], *, non_interactive: bool = False) -> list[str]:
-    """Shelly's explicitly selected AUR install operation; no fallback backend."""
-    if Path(helper).name != "shelly":
-        raise ValueError("only Shelly is supported for AUR installations")
-    command = [helper, "install", "aur"]
-    if non_interactive:
-        command += ["--needed", "--no-confirm"]
-    return [*command, *packages]
+def install_command(shelly: str, kind: str, packages: list[str]) -> list[str]:
+    """Non-interactive Shelly install; Shelly elevates via pkexec/run0/sudo itself."""
+    if kind not in ("standard", "aur"):
+        raise ValueError(f"unsupported package type: {kind}")
+    return [shelly, "install", kind, "--needed", "--no-confirm", *packages]
 
 
 def main() -> int:
@@ -140,11 +135,7 @@ def main() -> int:
     parser.add_argument("--host", required=True)
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--install", action="store_true",
-                        help="install audited missing packages (explicit opt-in)")
-    parser.add_argument("--approve-aur", action="store_true",
-                        help="permit allowlisted AUR exception installs")
-    parser.add_argument("--non-interactive", action="store_true",
-                        help="skip pacman/Shelly prompts for explicitly declared packages")
+                        help="install missing declared packages via Shelly")
     args = parser.parse_args()
     try:
         data = audit(args.repo.resolve(strict=True), args.host)
@@ -155,32 +146,22 @@ def main() -> int:
             print(f"  repo missing: {', '.join(data['missing_repo']) or 'none'}")
             print(f"  AUR missing: {', '.join(data['missing_aur']) or 'none'}")
             print(f"  repo unavailable: {', '.join(data['unavailable_repo']) or 'none'}")
-            print(f"  Shelly CLI: {data['aur_helper'] or 'unavailable'}")
+            print(f"  Shelly CLI: {data['shelly'] or 'unavailable'}")
             if data["blocking"]:
                 if data["unavailable_repo"]:
                     print("  BLOCKED: required repository packages are unavailable")
-                elif data["missing_aur"] and not data["aur_helper"]:
-                    print("  BLOCKED: Shelly CLI is required for reviewed AUR packages "
-                          "(install the official CachyOS shelly package)")
                 else:
-                    print("  BLOCKED: pacman unavailable")
+                    print("  BLOCKED: Shelly CLI unavailable "
+                          "(install the official CachyOS shelly package)")
         if data["blocking"]:
             return 2
-        if args.install and data["missing_aur"] and not args.approve_aur:
-            raise ValueError(
-                "AUR packages require explicit --approve-aur after PKGBUILD review: "
-                + ", ".join(data["missing_aur"])
-            )
         if args.install:
             if data["missing_repo"]:
-                subprocess.run(["sudo", "pacman", "-S",
-                                *(["--noconfirm"] if args.non_interactive else []),
-                                "--needed", "--",
-                                *data["missing_repo"]], check=True)
+                subprocess.run(install_command(data["shelly"], "standard",
+                                               data["missing_repo"]), check=True)
             if data["missing_aur"]:
-                subprocess.run(aur_install_command(data["aur_helper"],
-                                                   data["missing_aur"],
-                                                   non_interactive=args.non_interactive), check=True)
+                subprocess.run(install_command(data["shelly"], "aur",
+                                               data["missing_aur"]), check=True)
             verified = audit(args.repo.resolve(strict=True), args.host)
             if verified["missing_repo"] or verified["missing_aur"]:
                 raise ValueError("package manager reported success but required packages remain absent")

@@ -7,7 +7,7 @@ The old direct greeter installer is disabled.
 Use these reviewed, separate steps from your normal account:
   dot greeter                        # read-only preflight
   dot greeter --stage                # stage verified greeter assets (sudo)
-  dot greeter --activate --confirm 'ACTIVATE greetd'
+  dot greeter --activate
 To replace an existing DM, also pass --replace-display-manager explicitly.
 To recover from TTY, run dot greeter --rollback TXID.
 EOF

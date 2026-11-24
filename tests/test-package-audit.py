@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package audit tests with fake pacman, AUR and sudo; never install packages."""
+"""Package audit tests with a fake Shelly; never install packages."""
 from pathlib import Path
 import os
 import shutil
@@ -41,22 +41,19 @@ args=sys.argv[1:]
 installed=Path(os.environ["MOCK_INSTALLED"])
 available=Path(os.environ["MOCK_AVAILABLE"])
 name=Path(sys.argv[0]).name
-if name=="sudo":
-    os.execvp(args[0],args)
-if args==["-Qq"]:
+if name!="shelly":
+    Path(os.environ["MOCK_FORBIDDEN"]).write_text(f"{name} {args}")
+    raise SystemExit(f"{name} must never be invoked")
+if args==["list","standard","--names-only"]:
     print(installed.read_text(),end="")
-elif args==["-Slq"]:
+elif args==["search","standard","--available","--names-only"]:
     print(available.read_text(),end="")
-elif name=="shelly" and args[:2]==["install","aur"]:
+elif args[:1]==["install"] and args[1] in ("standard","aur"):
+    with Path(os.environ["MOCK_SHELLY_INVOCATIONS"]).open("a") as f:
+        f.write(" ".join(args)+"\n")
     with installed.open("a") as f:
         for p in args[2:]:
             if not p.startswith("-"): f.write(p+"\n")
-    Path(os.environ["MOCK_SHELLY_INVOCATIONS"]).write_text(" ".join(args))
-elif name=="pacman" and args[:1]==["-S"]:
-    pkgs=[v for v in args if not v.startswith("-") and v not in ("-S",)]
-    Path(os.environ["MOCK_PACMAN_INVOCATIONS"]).write_text(" ".join(args))
-    with installed.open("a") as f:
-        for p in pkgs: f.write(p+"\n")
 else:
     raise SystemExit(f"unexpected {name}: {args}")
 '''
@@ -65,15 +62,18 @@ else:
         path.write_text(shim)
         path.chmod(0o755)
     shelly_commands = root / "shelly-invocations"
-    pacman_commands = root / "pacman-invocations"
+    forbidden = root / "forbidden-invocations"
     env = {
         **os.environ,
         "MOCK_SHELLY_INVOCATIONS": str(shelly_commands),
-        "MOCK_PACMAN_INVOCATIONS": str(pacman_commands),
+        "MOCK_FORBIDDEN": str(forbidden),
         "MOCK_INSTALLED": str(installed),
         "MOCK_AVAILABLE": str(available),
-        "PATH": str(binpath) + os.pathsep + os.environ["PATH"],
+        # Only the mocks (plus git): the real shelly/pacman/sudo are unreachable.
+        "PATH": str(binpath),
     }
+    (binpath / "git").symlink_to(shutil.which("git"))
+    (binpath / "python3").symlink_to(sys.executable)
 
     def audit(*args: str, ok=True):
         proc = subprocess.run(
@@ -87,57 +87,30 @@ else:
             assert proc.returncode != 0, (proc.stdout,proc.stderr)
         return proc
 
-    assert "repo missing: bat, eza, fd, krita" in audit().stdout
-    assert "AUR missing: google-chrome, hokum-bin, mock-aura" in audit().stdout
-    audit("--install", ok=False)
-    assert installed.read_text() == "git\n", "AUR installed without explicit approval"
-    audit("--install", "--approve-aur")
+    report = audit().stdout
+    assert "repo missing: bat, eza, fd, krita" in report
+    assert "AUR missing: google-chrome, hokum-bin, mock-aura" in report
+    assert "Shelly CLI: " in report and "shelly" in report
+    # One non-interactive Shelly install per backend; no approval flags.
+    audit("--install")
+    assert shelly_commands.read_text().splitlines() == [
+        "install standard --needed --no-confirm bat eza fd krita",
+        "install aur --needed --no-confirm google-chrome hokum-bin mock-aura",
+    ]
     assert set(installed.read_text().split()) == {
         "git", "eza", "bat", "fd", "krita", "google-chrome", "hokum-bin", "mock-aura"
     }
     assert "repo missing: none" in audit().stdout
-    # Reset the log after the successful authorized scenario before testing
-    # that a subsequent unapproved installation never invokes Shelly.
-    shelly_commands.unlink(missing_ok=True)
+    assert not forbidden.exists(), forbidden.read_text()
 
-    installed.write_text("git\n")
-    (binpath / "shelly").unlink()
-    assert "BLOCKED" in audit(ok=False).stdout
-    assert "Shelly CLI is required" in audit(ok=False).stdout
-    audit("--install", ok=False)
-    assert installed.read_text() == "git\n", "missing Shelly installed packages"
-
-    # A CachyOS install with only Shelly can install explicit AUR exceptions.
-    (binpath / "shelly").write_text(shim)
-    (binpath / "shelly").chmod(0o755)
-    shelly_report = audit()
-    assert "Shelly CLI: " in shelly_report.stdout
-    assert "shelly" in shelly_report.stdout
-    audit("--install", ok=False)
-    assert installed.read_text() == "git\n", "Shelly bypassed required AUR approval"
-    assert not shelly_commands.exists(), "Shelly executed before approval"
-    audit("--install", "--approve-aur")
-    assert shelly_commands.read_text() == "install aur google-chrome hokum-bin mock-aura"
-    assert "repo missing: none" in audit().stdout
-    # The personal dot install path may run without repeated confirmation.
-    # Only manifest-listed AUR packages are passed and both managers get
-    # their documented non-interactive options.
+    # Without Shelly nothing can be queried or installed.
     installed.write_text("git\n")
     shelly_commands.unlink(missing_ok=True)
-    pacman_commands.unlink(missing_ok=True)
-    audit("--install", "--non-interactive", ok=False)
-    assert not shelly_commands.exists(), "unapproved direct AUR operation accepted"
-    assert installed.read_text() == "git\n"
-    audit("--install", "--approve-aur", "--non-interactive")
-    assert shelly_commands.read_text() == (
-        "install aur --needed --no-confirm google-chrome hokum-bin mock-aura"
-    )
-    assert "--noconfirm --needed --" in pacman_commands.read_text()
-    assert "repo missing: none" in audit().stdout
     (binpath / "shelly").unlink()
-    installed.write_text("git\n")
-    shelly_commands.unlink(missing_ok=True)
-    assert "BLOCKED" in audit(ok=False).stdout
+    assert "Shelly CLI unavailable" in audit(ok=False).stdout
+    audit("--install", ok=False)
+    assert installed.read_text() == "git\n", "installed packages without Shelly"
+    assert not forbidden.exists(), "fell back to pacman/sudo without Shelly"
 
     (binpath / "shelly").write_text(shim)
     (binpath / "shelly").chmod(0o755)
@@ -160,4 +133,4 @@ else:
     # Declined groups do not become attempted packages, unknown chosen groups fail.
     (repo / "hosts/A/optional.txt").write_text("nonexistent\n")
     assert "unknown optional group" in audit(ok=False).stderr
-print("package gates: Shelly-only allowlist, authorization, noninteractive flags and missing-CLI blockers: OK")
+print("package gates: Shelly-only backend, AUR allowlist and missing-CLI blockers: OK")

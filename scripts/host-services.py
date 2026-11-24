@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Per-host optional SYSTEM services; read-only status and explicit activation.
 
-Currently supports Bluetooth only. Never disables another machine's services
-or changes the system outside an explicit --apply --confirm action.
+Currently supports Bluetooth and Tailscale. Never disables another machine's services
+or changes the system outside an explicit --apply action.
 """
 from __future__ import annotations
 
@@ -14,7 +14,10 @@ import shutil
 import subprocess
 import sys
 
-ALLOWED = {"bluetooth": ("bluez", "bluetooth.service")}
+ALLOWED = {
+    "bluetooth": ("bluez", "bluetooth.service"),
+    "tailscale": ("tailscale", "tailscaled.service"),
+}
 
 
 def selected(repo: Path, host: str) -> list[str]:
@@ -40,15 +43,23 @@ def command(argv: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(argv, capture_output=True, text=True, timeout=20, check=False)
 
 
+def installed_packages(shelly: str | None) -> set[str]:
+    if not shelly:
+        return set()
+    result = command([shelly, "list", "standard", "--names-only"])
+    return set(result.stdout.split()) if result.returncode == 0 else set()
+
+
 def inspect(repo: Path, host: str, ctl: str | None = None,
-            pacman: str | None = None) -> dict:
+            shelly: str | None = None) -> dict:
     names = selected(repo, host)
     ctl = ctl or shutil.which("systemctl")
-    pacman = pacman or shutil.which("pacman")
+    shelly = shelly or shutil.which("shelly")
+    installed = installed_packages(shelly) if names else set()
     out: dict[str, dict] = {}
     for name in names:
         pkg, unit = ALLOWED[name]
-        package_installed = bool(pacman and command([pacman, "-Qq", pkg]).returncode == 0)
+        package_installed = pkg in installed
         unit_exists = bool(ctl and command([ctl, "cat", unit]).returncode == 0)
         enabled = bool(ctl and command([ctl, "is-enabled", unit]).returncode == 0)
         active = bool(ctl and command([ctl, "is-active", unit]).returncode == 0)
@@ -61,11 +72,8 @@ def inspect(repo: Path, host: str, ctl: str | None = None,
             "blocking": [name for name, item in out.items() if not item["ready"]]}
 
 
-def apply(repo: Path, host: str, ctl: str | None, pacman: str | None,
-          confirmation: str) -> dict:
-    if confirmation != "ENABLE HOST SERVICES":
-        raise ValueError("activation requires --confirm 'ENABLE HOST SERVICES'")
-    data = inspect(repo, host, ctl, pacman)
+def apply(repo: Path, host: str, ctl: str | None, shelly: str | None) -> dict:
+    data = inspect(repo, host, ctl, shelly)
     if data["blocking"]:
         raise ValueError("missing package/unit for: " + ", ".join(data["blocking"]))
     ctl = ctl or shutil.which("systemctl")
@@ -76,12 +84,12 @@ def apply(repo: Path, host: str, ctl: str | None, pacman: str | None,
         if record["enabled"] and record["active"]:
             print(f"{name}: already enabled and active, no-op")
             continue
-        # Explicit caller consent. sudo is invoked by the caller only on a real
-        # system; the command does not stop/disable any pre-existing service.
+        # Never stops/disables any pre-existing service.
         print(f"{name}: enabling {record['unit']} explicitly")
-        subprocess.run(["sudo", ctl, "enable", "--now", record["unit"]],
+        # Unprivileged systemctl asks polkit, so no terminal/sudo is needed.
+        subprocess.run([ctl, "enable", "--now", record["unit"]],
                        check=True, timeout=60)
-    return inspect(repo, host, ctl, pacman)
+    return inspect(repo, host, ctl, shelly)
 
 
 def main() -> int:
@@ -89,15 +97,14 @@ def main() -> int:
     parser.add_argument("--repo", required=True, type=Path)
     parser.add_argument("--host", required=True)
     parser.add_argument("--systemctl", help="testing: isolated systemctl binary")
-    parser.add_argument("--pacman", help="testing: isolated package-query binary")
+    parser.add_argument("--shelly", help="testing: isolated package-query binary")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--apply", action="store_true")
-    parser.add_argument("--confirm", default="")
     args = parser.parse_args()
     try:
         repo = args.repo.resolve(strict=True)
-        report = (apply(repo, args.host, args.systemctl, args.pacman, args.confirm)
-                  if args.apply else inspect(repo, args.host, args.systemctl, args.pacman))
+        report = (apply(repo, args.host, args.systemctl, args.shelly)
+                  if args.apply else inspect(repo, args.host, args.systemctl, args.shelly))
         if args.json:
             print(json.dumps(report, indent=2))
         else:
@@ -108,7 +115,7 @@ def main() -> int:
             if not report["selected"]:
                 print("  none selected; existing system services left unchanged")
             elif not args.apply:
-                print("  preview only; to activate: dot services --apply --confirm 'ENABLE HOST SERVICES'")
+                print("  preview only; to activate: dot services --apply")
         return 0 if not report["blocking"] else 2
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         print(f"host services: {exc}", file=sys.stderr)

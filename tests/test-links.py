@@ -111,7 +111,6 @@ with tempfile.TemporaryDirectory() as tmp:
     # Seeds are copy-once and never overwrite an app-owned file, including
     # subsequent relinks from an existing managed host.
     add("seed/.config/waypaper/config.ini", "seed once")
-    run_dot("confirm-host", input_text="A\n")
     run_dot("link")
     seed = home_a / ".config/waypaper/config.ini"
     assert seed.read_text() == "seed once"

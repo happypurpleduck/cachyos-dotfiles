@@ -6,15 +6,15 @@
 set -euo pipefail
 cd "$(dirname "$(realpath "$0")")"
 [ "$(realpath .)" = "$(realpath ~/cachyos-dotfiles)" ] || export DOTFILES=$PWD
-# A preview must never invoke sudo, pacman, stow, or setup.
+# A preview must never invoke sudo, shelly, stow, or setup.
 if [ "${1:-}" = "--dry-run" ]; then
   exec ./common/bin/.local/bin/dot install --dry-run
 fi
 # Linking uses the deterministic Python file planner, not Stow's overlay.
-# Enroll a new host BEFORE invoking the mutating dot install command: the
-# globally linked dot executable does not exist on a fresh machine yet.
+# Create a new host profile BEFORE invoking the mutating dot install command:
+# the globally linked dot executable does not exist on a fresh machine yet.
 command -v python3 >/dev/null || {
-  echo "python3 is required for preflight (sudo pacman -S --needed python)" >&2
+  echo "python3 is required for preflight (shelly install standard --needed python)" >&2
   exit 1
 }
 if [ "${1:-}" = "--prepare-host" ] && [ "$#" -ne 1 ]; then
@@ -28,20 +28,10 @@ esac
 
 host=${DOT_HOST:-$(cat /etc/hostname 2>/dev/null || hostname)}
 if [ ! -d "hosts/$host/home" ]; then
-  printf ':: no profile for host %s; a new machine needs its own host directory.\n' "$host"
-  if ! IFS= read -r -p "Create hosts/$host from the template? [y/N] " answer; then
-    echo "!! first installation requires explicit host-profile creation (from this checkout: ./common/bin/.local/bin/dot new-host $host)" >&2
-    exit 1
-  fi
-  case "${answer,,}" in
-    y | yes) ./common/bin/.local/bin/dot new-host "$host" ;;
-    *) echo "!! host profile creation declined; nothing installed" >&2; exit 1 ;;
-  esac
+  printf ':: no profile for host %s; creating hosts/%s from the template.\n' "$host" "$host"
+  ./common/bin/.local/bin/dot new-host "$host"
   printf ':: review hosts/%s/home/.config/hypr/host.lua and host-specific audio/GPU settings.\n' "$host"
 fi
-# Reuses the *checkout-local* command; already-confirmed hosts are a no-op.
-# An unconfirmed or different machine requires typing the selected hostname.
-./common/bin/.local/bin/dot confirm-host
 if [ "${1:-}" = "--prepare-host" ]; then
   printf ':: host prepared; review its settings and run ./install to continue.\n'
   exit 0

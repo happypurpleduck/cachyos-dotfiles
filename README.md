@@ -12,7 +12,7 @@ dot doctor                 # inspect effective link targets and common dependenc
 dot doctor --json          # machine-readable preflight results
 dot doctor --strict        # nonzero when blockers or required packages are absent
 dot link --dry-run         # read-only link preview (does not link)
-dot install --dry-run      # read-only bootstrap preview (no sudo or pacman)
+dot install --dry-run      # read-only bootstrap preview (no sudo or shelly)
 ./install --dry-run        # the same preview on a new checkout
 ```
 
@@ -21,7 +21,7 @@ managed target differences, foreign symlinks, ordinary files that would
 collide, and **folded-parent** directory symlinks left by earlier GNU Stow
 runs. A folded parent is deliberately treated as a blocker: automatically
 replacing that directory link risks losing access to app-generated files.
-The package inventory is read-only and uses the local pacman database when
+The package inventory is read-only and queries Shelly when
 present; no package/asset/service installation is implied. Display-manager
 status is informational only. It does not touch /etc or the greeter.
 
@@ -101,7 +101,7 @@ Arbitrary host scripts are also separate from routine installation:
 
 ```sh
 dot host-setup             # preview selected host-specific executable path
-dot host-setup --apply     # explicitly authorize its execution
+dot host-setup --apply     # run it
 ```
 
 Inspect a host script before consenting. It may perform machine-specific
@@ -224,9 +224,9 @@ successful `dot install`. The currently running session is never restarted.
 dot greeter                                      # read-only preflight: deps and existing DMs
 dot greeter --install                            # reconcile greeter (also done by dot install)
 dot greeter --stage                              # sudo: stage a complete independent greeter
-dot greeter --activate --confirm 'ACTIVATE greetd'
+dot greeter --activate
 # If replacing SDDM, GDM or LightDM, explicitly include:
-dot greeter --activate --replace-display-manager --confirm 'ACTIVATE greetd'
+dot greeter --activate --replace-display-manager
 # From a TTY if login is broken: Ctrl+Alt+F2, log in, then:
 dot greeter --rollback TXID
 ```
@@ -258,34 +258,36 @@ no virtual-machine test is required for merging.
 ### Optional system services belong to the host
 
 `hosts/<host>/services.txt` is an allowlisted manifest for optional system
-services; currently only `bluetooth` is supported. By default it is empty.
+services; currently `bluetooth` and `tailscale` are supported. By default it is empty.
 No other host's preferences are copied or activated.
 
 ```sh
 dot services                                   # read-only selected-host service status
-dot doctor --strict                             # includes missing chosen Bluetooth prerequisites
-dot services --apply --confirm 'ENABLE HOST SERVICES'
+dot doctor --strict                             # includes missing chosen service prerequisites
+dot services --apply                            # enable/start the selected services
 ```
 
-The last command is explicit opt-in and may run sudo to enable/start
-`bluetooth.service` after checking `bluez` and the unit exist. It is
-idempotent and never disables other services. Generic `dot install` reports
-service readiness but **does not silently enable Bluetooth**. A host with
+`dot services --apply` runs `systemctl enable --now` (authorized via polkit) for each selected unit
+(`bluetooth.service`, `tailscaled.service`) after checking its package and
+unit exist. It is idempotent and never disables other services. Generic
+`dot install` reports service readiness but does not enable them. A host with
 no selected optional services needs no privileged system-service changes.
 
 ### CachyOS dependency and service gates
 
-The installer audits the selected host's declared pacman and AUR requirements
-**before running either package manager**. `python3 scripts/package-audit.py
+The installer audits the selected host's declared repository and AUR
+requirements **before installing anything**. **Shelly is the only package
+manager used**, for queries and installs alike; pacman is never invoked. `python3 scripts/package-audit.py
 --repo "$(dot cd)" --host "$(hostname)"` is a read-only standalone check.
 AUR usage is restricted to explicitly documented exceptions in
 `packages/aur-exceptions.json`: `hokum-bin` as the core notification
 service, and shared `google-chrome` for Chrome on every desktop. No other AUR
 package may be introduced without a separate review and policy update.
-**A full `./install` does not ask for repeated AUR approvals.** The
-repo's allowlisted packages are the owner's declared choices: normal install
-uses Shelly with `--needed --no-confirm`, and official repository installs use
-pacman `--noconfirm --needed`. **Shelly is the only AUR manager supported.**
+**Installation never asks for confirmation.** The repo's allowlisted packages
+are the owner's declared choices: repository packages are installed with
+`shelly install standard --needed --no-confirm` and AUR exceptions with
+`shelly install aur --needed --no-confirm`. Shelly elevates through
+pkexec/run0/sudo itself, so a polkit agent can authorize it without a terminal.
 The AUR package names are still checked against `packages/aur-exceptions.json`,
 so simply adding an unreviewed package cannot bypass the policy. A missing Shelly CLI blocks installation
 before any package changes, with guidance to install `shelly` from the
@@ -293,8 +295,7 @@ official CachyOS repository. **Noninteractive AUR installation has a real
 supply-chain tradeoff:** allowed packages may receive changed upstream
 PKGBUILDs without an extra review prompt. Review changes to those declared
 exceptions before using this mode, or remove the AUR package from the manifest.
-A direct `scripts/package-audit.py --install` call still requires
-`--approve-aur` for AUR work. Unavailable packages remain hard blockers. Selected
+Unavailable packages remain hard blockers. Selected
 optional groups and host packages remain isolated to their host. `dot doctor`
 uses the same audit.
 
@@ -344,10 +345,10 @@ home-file rollback.
 Install CachyOS (any desktop, or none), log in, then:
 
 ```sh
-sudo pacman -S --needed git openssh github-cli
+shelly install standard --needed git openssh github-cli
 gh auth login                       # SSH, so the private repo can be cloned
 git clone git@github.com:happypurpleduck/cachyos-dotfiles.git ~/cachyos-dotfiles
-~/cachyos-dotfiles/install             # creates and confirms a new host profile interactively
+~/cachyos-dotfiles/install             # creates a new host profile if needed, then installs
 ```
 
 The checkout can also live in another directory. After installation, `dot`
@@ -361,52 +362,45 @@ example `DOT_HOST=laptop dot status`. Keep **one distinct host directory per
 physical machine**; do not select another machine's hardware profile merely
 because its settings look similar. `hosts/_template` is never selectable.
 
-**First install:** `./install` detects a missing host profile, asks before
-creating `hosts/<hostname>/` from `hosts/_template`, and prompts you to
-confirm the selected machine by typing its hostname. It uses the repository's
-own `./common/bin/.local/bin/dot` script, so `dot` does **not** need to be
-installed yet. On a returning/confirmed machine, the confirmation step is a
-no-op. If you want to review and commit the new host-specific settings before
+**First install:** `./install` detects a missing host profile and creates
+`hosts/<hostname>/` from `hosts/_template` without prompting. It uses the
+repository's own `./common/bin/.local/bin/dot` script, so `dot` does **not**
+need to be installed yet. On a returning machine the existing profile is used
+as-is. If you want to review and commit the new host-specific settings before
 applying packages, links or services, use `./install --prepare-host` and then
 `./install`. Read-only `./install --dry-run` never creates a host profile.
 
-For manual control, you can also create/confirm the profile explicitly:
+For manual control, you can also create the profile explicitly:
 
 ```sh
 dot new-host my-new-host       # only if it doesn't exist yet
-DOT_HOST=my-new-host dot confirm-host
 DOT_HOST=my-new-host dot doctor
 DOT_HOST=my-new-host dot install
 ```
 
-`dot confirm-host` requires typing the chosen profile name and saves a
-non-Git local marker tied to `/etc/machine-id`. Mutating commands refuse to
-operate on an unconfirmed profile, even if the hostname matches. A renamed
-machine or a cloned system with a new machine-id must be confirmed again.
-This is **not** a hardware probe: inspect display/GPU/audio configuration
-before confirming. The original host's Chrome and Zed MIME defaults now live
+The selected profile is not checked against the hardware: inspect its
+display/GPU/audio configuration before installing. The original host's Chrome and Zed MIME defaults now live
 in `hosts/husain-pc/home/.config/mimeapps.list`; the shared defaults make no
 assumption that other hosts have those optional applications. The T3 Code
 launcher uses `t3code-launch` from the user's `~/.local/bin`, which must be
 available in the graphical session `PATH`. The Waypaper seed no longer
 references a different user's wallpaper file.
 
-`install` follows the repo manifests with no repeated application approvals.
-It can still ask for the normal sudo password, and first-time host enrollment
-still asks you to confirm the selected physical machine. Installation does not
+`install` follows the repo manifests with no confirmation prompts. It can
+still ask for authentication (sudo or a polkit agent). Installation does not
 ask about optional package groups: use `dot optional --list` and
 `dot optional <group>` to choose them explicitly.
 
 Full installation:
 
-1. requires explicit `dot confirm-host` enrollment (create the host profile first if this machine is new)
+1. creates the host profile from `hosts/_template` if this machine is new
 2. installs `packages/common.txt`, the host's `packages.txt` and already-selected optional groups
-   (approved shared/host AUR exceptions via Shelly only; no repeated typed approval)
+   via Shelly (allowlisted shared/host AUR exceptions included; no prompts)
 3. attempts optional assets: wallpapers, cursors, mpv scripts/shaders and T3 Code (failures do not block linking)
 4. links the effective per-host files transactionally, automatically backing up replaced stock config files
-5. installs missing mise and Zed via their official user-local installers, with no pacman/AUR management
+5. installs missing mise and Zed via their official user-local installers, with no Shelly/AUR management
 6. stages and activates Mocha greetd for the next boot, backing up any previous display-manager state; no login-session restart
-7. keeps other system integration opt-in via `--apply-system` (PAM/DDC), and host scripts separately consented
+7. keeps other system integration opt-in via `--apply-system` (PAM/DDC), and host scripts via `dot host-setup --apply`
 
 After a full installation, confirm the printed Mocha greeter rollback command,
 check `dot doctor`, required services, theme generation and shell startup before

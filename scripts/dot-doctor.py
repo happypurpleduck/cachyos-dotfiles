@@ -120,7 +120,7 @@ def report(repo: Path, home: Path, host: str) -> dict:
         "packages": packages_status(repo, host),
         "prerequisites": {
             command: bool(shutil.which(command))
-            for command in ("git", "python3", "stow", "pacman", "systemctl")
+            for command in ("git", "python3", "stow", "shelly", "systemctl")
         },
         "host_services": (
             __import__("runpy").run_path(str(repo / "scripts/host-services.py"))["inspect"](repo, host)

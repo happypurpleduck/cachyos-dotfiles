@@ -39,7 +39,7 @@ USER_HOME=$(getent passwd "$USER_NAME" | cut -d: -f6)
 if [ -f "$PAM" ] && ! grep -q pam_gnome_keyring "$PAM"; then
   grep -Eq "^auth[[:space:]].*include[[:space:]]+system-local-login" "$PAM" || { echo "PAM auth include not found; refusing" >&2; exit 1; }
   grep -Eq "^session[[:space:]].*include[[:space:]]+system-local-login" "$PAM" || { echo "PAM session include not found; refusing" >&2; exit 1; }
-  command -v pacman >/dev/null && pacman -Qq gnome-keyring >/dev/null 2>&1 || {
+  command -v shelly >/dev/null && shelly list standard --names-only | grep -qx gnome-keyring || {
     echo "gnome-keyring package not installed; refusing PAM change" >&2
     exit 1
   }

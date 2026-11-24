@@ -1,0 +1,2 @@
+# Tailscale — WireGuard mesh VPN (enable tailscaled via `dot services`, then `sudo tailscale up`)
+tailscale

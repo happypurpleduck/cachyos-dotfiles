@@ -213,9 +213,7 @@ def build_config() -> str:
 
 
 def activate(root: Path, source: Path, home: Path, user: str, *,
-             ctl: str | None, confirm: str | None, replace: bool) -> str:
-    if confirm != "ACTIVATE greetd":
-        raise ValueError("explicit --confirm 'ACTIVATE greetd' is required")
+             ctl: str | None, replace: bool) -> str:
     check_prereqs(root, source, user)
     parent = root / "etc/greetd"
     staged = parent / "mocha-greeter-staged"
@@ -331,7 +329,7 @@ def install_default(root: Path, source: Path, home: Path, user: str, *,
         print("greeter already configured for next boot; no display-manager changes")
         return None
     return activate(root, source, home, user, ctl=ctl,
-                    confirm="ACTIVATE greetd", replace=True)
+                    replace=True)
 
 
 def rollback(root: Path, txid: str, ctl: str) -> None:
@@ -384,7 +382,6 @@ def main() -> int:
                          help="reconcile default greeter for next boot")
     actions.add_argument("--rollback", metavar="TXID")
     parser.add_argument("--replace-display-manager", action="store_true")
-    parser.add_argument("--confirm")
     args = parser.parse_args()
     try:
         root = args.root.resolve(strict=True)
@@ -397,7 +394,7 @@ def main() -> int:
             stage(root, source, home, args.user)
         elif args.activate:
             activate(root, source, home, args.user, ctl=args.systemctl,
-                     confirm=args.confirm, replace=args.replace_display_manager)
+                     replace=args.replace_display_manager)
         elif args.install:
             install_default(root, source, home, args.user, ctl=args.systemctl)
         elif args.rollback:
@@ -409,7 +406,7 @@ def main() -> int:
             print("  source:", source)
             print("  active/enabled competing DM:", ", ".join(others) or "none")
             print("  stage path:", root / "etc/greetd/mocha-greeter-staged")
-            print("  activation requires explicit --confirm 'ACTIVATE greetd'")
+            print("  activate with: dot greeter --activate")
             print("  no running display manager will be restarted")
         return 0
     except (OSError, ValueError, subprocess.SubprocessError, json.JSONDecodeError) as exc:

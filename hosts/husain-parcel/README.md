@@ -20,9 +20,8 @@ Add more machine-only files with `dot add --host <file>`.
 
 Use a distinct host directory for every physical CachyOS machine. The default
 profile name matches /etc/hostname; do not reuse another machine's profile to
-copy its monitor, GPU, audio, or service settings. Confirm it locally with:
+copy its monitor, GPU, audio, or service settings. Inspect it locally with:
 
-    dot confirm-host
     dot plan
     dot doctor
 
@@ -32,7 +31,7 @@ without hiding other files in the same shared app directory.
 
 Packages for the system go in packages/common.txt or this host's packages.txt.
 Applications that update themselves from their upstream publisher (mise, Zed)
-belong in the separate explicit dot apps lifecycle, never AUR or pacman lists.
+belong in the separate explicit dot apps lifecycle, never AUR or repo package lists.
 Every AUR exception must be documented and reviewed. Do not commit credentials,
 secret tokens, local keyrings, runtime histories, device identifiers or
 application-generated caches.
@@ -40,5 +39,5 @@ application-generated caches.
 Full multi-host test and recovery instructions: docs/verification.md.
 
 System services are separate from user services: edit this host's services.txt
-to select supported optional Bluetooth service, run dot services to inspect
-readiness, and only then explicitly authorize dot services --apply.
+to select supported optional services (bluetooth, tailscale), run dot services
+to inspect readiness, then dot services --apply to enable them.

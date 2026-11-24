@@ -21,7 +21,7 @@ from pathlib import Path
 if "--install" in sys.argv:
     (Path.home() / "package-install-invoked").write_text("yes")
     if os.environ.get("SIMULATE_AUR_REQUIRED") == "1":
-        assert "--approve-aur" in sys.argv and "--non-interactive" in sys.argv, sys.argv
+        assert not {"--approve-aur", "--non-interactive"} & set(sys.argv), sys.argv
         (Path.home() / "auto-aur-invoked").write_text("yes")
 if "--json" in sys.argv:
     print('{"missing_aur":["google-chrome"]}' if os.environ.get("SIMULATE_AUR_REQUIRED") == "1" else '{"missing_aur":[]}')
@@ -120,7 +120,6 @@ export PATH="$fakebin:$PATH"
 export UNIT_STATE="$tmp/enabled-units"
 : > "$UNIT_STATE"
 unset DOTFILES
-printf 'A\n' | "$dot" confirm-host >/dev/null 2>&1
 
 # Unsafe targets fail before package installation.
 if SIMULATE_UNSAFE_TARGET=1 "$dot" install >"$tmp/output" 2>"$tmp/error"; then
