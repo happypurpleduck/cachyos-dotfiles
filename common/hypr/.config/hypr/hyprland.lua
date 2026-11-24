@@ -44,7 +44,7 @@ local host = {}
 hl.on("hyprland.start", function()
 	-- apps started by systemd/D-Bus services (e.g. links from Hokum) get the same theme env
 	hl.exec_cmd(
-		"dbus-update-activation-environment --systemd EDITOR VISUAL QT_QPA_PLATFORMTHEME QT_WAYLAND_DISABLE_WINDOWDECORATION XCURSOR_THEME XCURSOR_SIZE HYPRCURSOR_THEME HYPRCURSOR_SIZE"
+		"dbus-update-activation-environment --systemd PATH EDITOR VISUALQT_QPA_PLATFORMTHEME QT_WAYLAND_DISABLE_WINDOWDECORATION XCURSOR_THEME XCURSOR_SIZE HYPRCURSOR_THEME HYPRCURSOR_SIZE"
 	)
 
 	-- Wallpaper + accent: awww daemon, then mocha-theme restores the last
@@ -91,6 +91,14 @@ hl.env("QT_QPA_PLATFORMTHEME", "qt6ct")
 hl.env("QT_WAYLAND_DISABLE_WINDOWDECORATION", "1")
 hl.env("QT_AUTO_SCREEN_SCALE_FACTOR", "1")
 hl.env("ELECTRON_OZONE_PLATFORM_HINT", "auto")
+
+-- User tools (same as ~/.zshenv) so desktop entries and binds can run
+-- ~/.local/bin scripts such as t3code-launch. Guarded so reloads don't stack it.
+local pathHome = os.getenv("HOME")
+local sessionPath = os.getenv("PATH") or "/usr/local/bin:/usr/bin"
+if pathHome and not (":" .. sessionPath .. ":"):find(":" .. pathHome .. "/.local/bin:", 1, true) then
+	hl.env("PATH", pathHome .. "/.local/bin:" .. pathHome .. "/.local/share/mise/shims:" .. sessionPath)
+end
 
 -- Editors (same as ~/.zshenv) for apps launched from the desktop
 hl.env("EDITOR", "nvim")
