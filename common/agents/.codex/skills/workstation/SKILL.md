@@ -1,0 +1,1 @@
+../../../.claude/skills/workstation/SKILL.md
