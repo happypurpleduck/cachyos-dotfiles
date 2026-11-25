@@ -1,0 +1,481 @@
+#!/usr/bin/env bash
+# vm — KVM/libvirt virtual machines, made to be driven by people and agents alike.
+#
+# Every command is non-interactive (no prompts, ssh runs in BatchMode), prints
+# plain text, and exits non-zero on failure, so coding agents (Claude Code,
+# Codex, T3 Code sessions) can create, operate and throw away VMs on their own.
+# VMs live on qemu:///system, the same connection virt-manager shows, on the
+# default NAT network; guests reach the internet and the host reaches guests.
+#
+#   vm setup                      one-time host setup (sudo): libvirt group, libvirtd,
+#                                 default network + pool, ufw rules, VM ssh key
+#   vm doctor                     check that everything above is in place
+#   vm images                     cloud images `vm create --image` knows
+#   vm pull IMAGE                 download a fresh copy of a cloud image
+#
+#   vm create NAME [opts]         new VM from a cloud image, ready for ssh
+#       --image ID                cloud image (default ubuntu-26.04; see vm images)
+#       --url URL                 any qcow2 cloud image instead of --image
+#       --iso FILE                install from an ISO instead (blank disk, use vm view)
+#       --cpus N --memory MiB --disk GiB   (default 2 / 4096 / 20)
+#       --user NAME               login user for cloud images (default: you)
+#       --uefi                    boot with UEFI + emulated TPM (needed for Windows 11;
+#                                 internal snapshots then don't work)
+#       --no-wait                 return before the guest has finished booting
+#   vm list [--json]              all VMs, their state and address
+#   vm info NAME                  state, resources, address, login user
+#   vm ip NAME                    the guest's IPv4 address
+#   vm wait NAME [SECONDS]        wait until ssh works and cloud-init is done
+#   vm ssh NAME [CMD...]          shell, or run CMD in the guest (exit status passes through)
+#   vm cp SRC DST                 copy files; prefix the guest side with NAME: (recursive)
+#   vm start|reboot NAME          power on / reboot
+#   vm stop NAME [--force]        clean shutdown (--force pulls the plug)
+#   vm snapshot NAME [LABEL]      take a snapshot (default label: a timestamp)
+#   vm snapshots NAME             list snapshots
+#   vm revert NAME LABEL          roll back to a snapshot
+#   vm delete NAME [--force]      remove the VM and its disk; --force is required
+#                                 for VMs that vm did not create
+#   vm view NAME                  open the graphical console (virt-viewer)
+#   vm console NAME               serial console (exit with Ctrl+])
+#
+# Plain virsh/virt-install/virt-customize also work: ~/.config/libvirt/libvirt.conf
+# points them at qemu:///system. Env: VM_URI, VM_POOL, VM_NETWORK, VM_KEY.
+set -euo pipefail
+
+URI=${VM_URI:-qemu:///system}
+POOL=${VM_POOL:-default}
+NETWORK=${VM_NETWORK:-default}
+KEY=${VM_KEY:-$HOME/.ssh/vm_ed25519}
+STATE=${XDG_STATE_HOME:-$HOME/.local/state}/vm
+CACHE=${XDG_CACHE_HOME:-$HOME/.cache}/vm
+MARK="managed by vm"
+
+say() { printf '\033[1;35m::\033[0m %s\n' "$*" >&2; }
+warn() { printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
+die() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+virsh() { command virsh -q -c "$URI" "$@"; }
+
+# id | url | checksum file | checksum tool
+IMAGES='
+ubuntu-26.04|https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-amd64.img|https://cloud-images.ubuntu.com/releases/26.04/release/SHA256SUMS|sha256sum
+ubuntu-24.04|https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img|https://cloud-images.ubuntu.com/releases/24.04/release/SHA256SUMS|sha256sum
+debian-13|https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2|https://cloud.debian.org/images/cloud/trixie/latest/SHA512SUMS|sha512sum
+arch|https://geo.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2|https://geo.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2.SHA256|sha256sum
+'
+image_field() { # image_field ID N
+  awk -F'|' -v id="$1" -v n="$2" '$1==id {print $n}' <<<"$IMAGES"
+}
+
+valid_name() {
+  [[ $1 =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] || die "VM names are lowercase letters, digits and dashes (they become the hostname): $1"
+}
+exists() { virsh dominfo "$1" >/dev/null 2>&1; }
+need_vm() { exists "$1" || die "no such VM: $1 (vm list)"; }
+managed() { virsh desc "$1" 2>/dev/null | grep -qx "$MARK"; }
+state() { virsh domstate "$1" 2>/dev/null | head -n1; }
+
+# ── readiness ─────────────────────────────────────────────────────────────
+need_tools() {
+  local t missing=()
+  for t in virsh virt-install qemu-img; do command -v "$t" >/dev/null || missing+=("$t"); done
+  [ ${#missing[@]} -eq 0 ] || die "missing ${missing[*]}: install the group with \`dot optional virtualization\`"
+}
+
+ready() {
+  need_tools
+  if ! virsh uri >/dev/null 2>&1; then
+    if ! id -nG | tr ' ' '\n' | grep -qx libvirt; then
+      if getent group libvirt | cut -d: -f4 | tr ',' '\n' | grep -qx "$(id -un)"; then
+        die "this session predates joining the libvirt group: log out and back in (or restart T3 Code/the agent)"
+      fi
+      die "no access to $URI: run \`vm setup\` once (it asks for sudo)"
+    fi
+    die "cannot reach libvirt at $URI (is libvirtd running? \`vm setup\` enables it)"
+  fi
+  [ "$(virsh net-info "$NETWORK" 2>/dev/null | awk '/^Active:/ {print $2}')" = yes ] ||
+    die "libvirt network '$NETWORK' is not active: run \`vm setup\`"
+  [ "$(virsh pool-info "$POOL" 2>/dev/null | awk '/^State:/ {print $2}')" = running ] ||
+    die "libvirt storage pool '$POOL' is not running: run \`vm setup\`"
+  [ -f "$KEY" ] || ssh-keygen -q -t ed25519 -N '' -C "vm@$(hostname)" -f "$KEY"
+}
+
+cmd_setup() {
+  need_tools
+  local me; me=$(id -un)
+  [ -e /dev/kvm ] || warn "/dev/kvm is missing: enable VT-x/AMD-V in the firmware, VMs will be very slow"
+  if ! getent group libvirt | cut -d: -f4 | tr ',' '\n' | grep -qx "$me"; then
+    say "adding $me to the libvirt group (full access to qemu:///system without prompts)"
+    sudo usermod -aG libvirt "$me"
+    warn "log out and back in (restart T3 Code too) so new sessions get the group"
+  fi
+  if ! systemctl is-enabled -q libvirtd.service 2>/dev/null || ! systemctl is-active -q libvirtd.service; then
+    say "enabling libvirtd"
+    systemctl enable --now libvirtd.service
+  fi
+  # The group may not be active in this session yet, so set up through sudo.
+  local sv=(sudo virsh -q -c "$URI")
+  if ! "${sv[@]}" net-info "$NETWORK" >/dev/null 2>&1; then
+    say "defining the '$NETWORK' NAT network"
+    "${sv[@]}" net-define /usr/share/libvirt/networks/default.xml >/dev/null
+  fi
+  "${sv[@]}" net-autostart "$NETWORK" >/dev/null
+  if [ "$("${sv[@]}" net-info "$NETWORK" | awk '/^Active:/ {print $2}')" != yes ]; then
+    say "starting the '$NETWORK' network"
+    "${sv[@]}" net-start "$NETWORK" >/dev/null
+  fi
+  if ! "${sv[@]}" pool-info "$POOL" >/dev/null 2>&1; then
+    say "defining the '$POOL' storage pool at /var/lib/libvirt/images"
+    "${sv[@]}" pool-define-as "$POOL" dir --target /var/lib/libvirt/images >/dev/null
+    "${sv[@]}" pool-build "$POOL" >/dev/null 2>&1 || true
+  fi
+  "${sv[@]}" pool-autostart "$POOL" >/dev/null
+  if [ "$("${sv[@]}" pool-info "$POOL" | awk '/^State:/ {print $2}')" != running ]; then
+    "${sv[@]}" pool-start "$POOL" >/dev/null
+  fi
+  # ufw drops inbound and forwarded traffic by default: without these, guests
+  # get no DHCP lease/DNS from libvirt's dnsmasq and no route out. ufw skips
+  # rules that already exist.
+  if command -v ufw >/dev/null && systemctl is-active -q ufw; then
+    local bridge
+    bridge=$("${sv[@]}" net-info "$NETWORK" | awk '/^Bridge:/ {print $2}')
+    say "ufw: allow DHCP/DNS and forwarding for $bridge"
+    sudo ufw allow in on "$bridge" comment 'libvirt guests' >/dev/null
+    sudo ufw route allow in on "$bridge" comment 'libvirt guests' >/dev/null
+    sudo ufw route allow out on "$bridge" comment 'libvirt guests' >/dev/null
+  fi
+  if [ ! -f "$KEY" ]; then
+    say "creating the VM ssh key $KEY (no passphrase, so agents can log in)"
+    ssh-keygen -q -t ed25519 -N '' -C "vm@$(hostname)" -f "$KEY"
+  fi
+  say "done; check with: vm doctor"
+}
+
+cmd_doctor() {
+  local bad=0 me; me=$(id -un)
+  ok() { printf '  \033[1;32mok\033[0m   %s\n' "$*"; }
+  no() { printf '  \033[1;31mfail\033[0m %s\n' "$*"; bad=1; }
+  local t; for t in virsh virt-install qemu-img virt-viewer virt-customize; do
+    command -v "$t" >/dev/null && ok "$t" || no "$t missing (dot optional virtualization)"
+  done
+  [ -w /dev/kvm ] && ok "/dev/kvm usable" || no "/dev/kvm not usable (firmware virtualization off?)"
+  getent group libvirt | cut -d: -f4 | tr ',' '\n' | grep -qx "$me" && ok "$me in libvirt group" || no "$me not in libvirt group (vm setup)"
+  id -nG | tr ' ' '\n' | grep -qx libvirt && ok "libvirt group active in this session" || no "libvirt group not active in this session (log in again)"
+  systemctl is-active -q libvirtd.service && ok "libvirtd running" || no "libvirtd not running (vm setup)"
+  if virsh uri >/dev/null 2>&1; then
+    ok "connected to $URI"
+    [ "$(virsh net-info "$NETWORK" 2>/dev/null | awk '/^Active:/ {print $2}')" = yes ] && ok "network $NETWORK active" || no "network $NETWORK inactive (vm setup)"
+    [ "$(virsh pool-info "$POOL" 2>/dev/null | awk '/^State:/ {print $2}')" = running ] && ok "pool $POOL running" || no "pool $POOL not running (vm setup)"
+  else
+    no "cannot connect to $URI"
+  fi
+  [ -f "$KEY" ] && ok "ssh key $KEY" || no "ssh key $KEY missing (vm setup)"
+  return $bad
+}
+
+# ── images ────────────────────────────────────────────────────────────────
+cmd_images() {
+  local id url base
+  printf '%-14s %-24s %s\n' IMAGE "IN POOL" URL
+  while IFS='|' read -r id url _ _; do
+    [ -n "$id" ] || continue
+    base=$( (virsh vol-list "$POOL" 2>/dev/null || true) | awk '{print $1}' | grep "^base-$id-" | sort | tail -n1)
+    printf '%-14s %-24s %s\n' "$id" "${base:--}" "$url"
+  done <<<"$IMAGES"
+}
+
+latest_base() { virsh vol-list "$POOL" | awk '{print $1}' | grep "^base-$1-" | sort | tail -n1 || true; }
+
+# Upload a local file into the pool as VOLUME (qemu can't read ~, the pool it can).
+upload() { # upload FILE VOLUME
+  virsh vol-create-as "$POOL" "$2" "$(stat -c %s "$1")" --format raw >/dev/null
+  virsh vol-upload --pool "$POOL" "$2" "$1" || { virsh vol-delete --pool "$POOL" "$2" >/dev/null 2>&1; die "upload of $1 failed"; }
+  virsh pool-refresh "$POOL" >/dev/null # re-probe: the bytes are qcow2/iso, not raw
+}
+
+cmd_pull() { # pull ID|URL → prints the base volume name
+  local id=$1 url sums tool file tmp vol
+  if [[ $id == *://* ]]; then
+    url=$id; id=custom-$(printf '%s' "$url" | sha256sum | cut -c1-8); sums=""; tool=""
+  else
+    url=$(image_field "$id" 2) ; [ -n "$url" ] || die "unknown image: $id (vm images, or --url)"
+    sums=$(image_field "$id" 3); tool=$(image_field "$id" 4)
+  fi
+  file=${url##*/}
+  mkdir -p "$CACHE"
+  tmp=$CACHE/$file.part
+  say "downloading $url"
+  curl -fL --retry 3 --progress-bar -o "$tmp" "$url" || die "download failed: $url"
+  if [ -n "$sums" ]; then
+    local want got
+    want=$(curl -fsSL "$sums" | awk -v f="$file" '{n=$2; sub(/^\*/, "", n)} n==f {print $1}')
+    [ -n "$want" ] || die "no checksum for $file in $sums"
+    got=$("$tool" "$tmp" | cut -d' ' -f1)
+    [ "$want" = "$got" ] || { rm -f "$tmp"; die "checksum mismatch for $file"; }
+    say "checksum ok"
+  else
+    warn "custom URL: no checksum to verify"
+  fi
+  qemu-img info "$tmp" >/dev/null || die "$file is not a disk image"
+  vol=base-$id-$(date +%Y%m%d%H%M).qcow2
+  upload "$tmp" "$vol"
+  rm -f "$tmp"
+  say "stored as $POOL/$vol"
+  printf '%s\n' "$vol"
+}
+
+# ── create ────────────────────────────────────────────────────────────────
+cmd_create() {
+  local name=${1:-}; [ -n "$name" ] && shift || die "usage: vm create NAME [--image ID|--url URL|--iso FILE] ..."
+  valid_name "$name"
+  local image=ubuntu-26.04 url="" iso="" cpus=2 memory=4096 disk=20 user=$USER uefi=0 wait=1
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --image) image=${2:?}; shift 2 ;;
+      --url) url=${2:?}; shift 2 ;;
+      --iso) iso=${2:?}; shift 2 ;;
+      --cpus) cpus=${2:?}; shift 2 ;;
+      --memory) memory=${2:?}; shift 2 ;;
+      --disk) disk=${2:?}; shift 2 ;;
+      --user) user=${2:?}; shift 2 ;;
+      --uefi) uefi=1; shift ;;
+      --no-wait) wait=0; shift ;;
+      *) die "unknown option: $1" ;;
+    esac
+  done
+  [[ $cpus$memory$disk =~ ^[0-9]+$ ]] || die "--cpus, --memory and --disk take whole numbers"
+  [[ $user =~ ^[a-z_][a-z0-9_-]*$ ]] || die "invalid user name: $user"
+  ready
+  exists "$name" && die "VM $name already exists"
+  virsh vol-info --pool "$POOL" "$name.qcow2" >/dev/null 2>&1 && die "volume $POOL/$name.qcow2 already exists (left over? virsh vol-delete --pool $POOL $name.qcow2)"
+
+  local dir=$STATE/$name
+  rm -rf "$dir"; mkdir -p "$dir"
+  local args=(--connect "$URI" --name "$name" --memory "$memory" --vcpus "$cpus"
+    --cpu host-passthrough --graphics spice --video virtio --noautoconsole --metadata "description=$MARK")
+  [ "$uefi" = 1 ] && args+=(--boot uefi --tpm emulator)
+
+  if [ -n "$iso" ]; then
+    [ -f "$iso" ] || die "no such ISO: $iso"
+    local isovol; isovol=iso-$(basename "$iso" | tr -c 'A-Za-z0-9._-' _)
+    virsh vol-info --pool "$POOL" "$isovol" >/dev/null 2>&1 || { say "copying $iso into the pool"; upload "$iso" "$isovol"; }
+    virsh vol-create-as "$POOL" "$name.qcow2" "${disk}G" --format qcow2 >/dev/null
+    say "creating $name from $(basename "$iso")"
+    # SATA + e1000e so installers without virtio drivers (Windows) see disk and
+    # network. The blank disk boots first and falls through to the ISO, so the
+    # installed system boots once it exists.
+    virt-install "${args[@]}" --osinfo detect=on,require=off \
+      --network "network=$NETWORK,model=e1000e" \
+      --disk "vol=$POOL/$name.qcow2,bus=sata,boot.order=1" \
+      --disk "vol=$POOL/$isovol,device=cdrom,boot.order=2" >/dev/null
+    echo "iso" >"$dir/kind"
+    say "$name is booting the installer: finish it with \`vm view $name\`"
+    return
+  fi
+
+  local base
+  if [ -n "$url" ]; then base=$(cmd_pull "$url")
+  else
+    [ -n "$(image_field "$image" 2)" ] || die "unknown image: $image (vm images)"
+    base=$(latest_base "$image"); [ -n "$base" ] || base=$(cmd_pull "$image")
+  fi
+  virsh vol-create-as "$POOL" "$name.qcow2" "${disk}G" --format qcow2 \
+    --backing-vol "$base" --backing-vol-format qcow2 >/dev/null
+
+  cat >"$dir/user-data" <<EOF
+#cloud-config
+hostname: $name
+users:
+  - name: $user
+    shell: /bin/bash
+    groups: [wheel, sudo, adm]
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: true
+    ssh_authorized_keys:
+      - $(cat "$KEY.pub")
+ssh_pwauth: false
+package_update: false
+packages: [qemu-guest-agent]
+runcmd:
+  - [systemctl, enable, --now, qemu-guest-agent]
+EOF
+  printf 'instance-id: %s-%s\nlocal-hostname: %s\n' "$name" "$(date +%s)" "$name" >"$dir/meta-data"
+  printf '%s\n' "$user" >"$dir/user"
+
+  say "creating $name ($cpus cpu, ${memory} MiB, ${disk} GiB) from $base"
+  virt-install "${args[@]}" --osinfo linux2022 --import \
+    --network "network=$NETWORK,model=virtio" --disk "vol=$POOL/$name.qcow2,bus=virtio" \
+    --cloud-init "user-data=$dir/user-data,meta-data=$dir/meta-data" >/dev/null
+  if [ "$wait" = 1 ]; then
+    cmd_wait "$name" 600
+    say "$name is ready: vm ssh $name"
+  else
+    say "$name is booting: vm wait $name"
+  fi
+}
+
+# ── operate ───────────────────────────────────────────────────────────────
+vm_ip() {
+  local src ip
+  for src in agent lease arp; do
+    ip=$(virsh domifaddr "$1" --source "$src" 2>/dev/null |
+      awk '$3=="ipv4" {split($4, a, "/"); if (a[1] !~ /^127\./) print a[1]}' | tail -n1)
+    [ -n "$ip" ] && { printf '%s\n' "$ip"; return 0; }
+  done
+  return 1
+}
+cmd_ip() { need_vm "$1"; vm_ip "$1" || die "$1 has no address yet (running? vm wait $1)"; }
+
+vm_user() { cat "$STATE/$1/user" 2>/dev/null || printf '%s\n' "${VM_USER:-$USER}"; }
+ssh_opts() {
+  mkdir -p "$STATE/$1"
+  printf '%s\n' -i "$KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=5 \
+    -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$STATE/$1/known_hosts" -o LogLevel=ERROR
+}
+
+cmd_wait() {
+  local name=$1 timeout=${2:-300} ip="" end opts
+  need_vm "$name"
+  end=$((SECONDS + timeout))
+  [ "$(state "$name")" = running ] || die "$name is not running (vm start $name)"
+  until ip=$(vm_ip "$name"); do
+    [ $SECONDS -lt $end ] || die "$name got no address within ${timeout}s"
+    sleep 2
+  done
+  mapfile -t opts < <(ssh_opts "$name")
+  until ssh "${opts[@]}" "$(vm_user "$name")@$ip" true 2>/dev/null; do
+    [ $SECONDS -lt $end ] || die "ssh to $name ($ip) did not come up within ${timeout}s"
+    sleep 2
+  done
+  ssh "${opts[@]}" "$(vm_user "$name")@$ip" 'command -v cloud-init >/dev/null && cloud-init status --wait >/dev/null; true'
+  printf '%s\n' "$ip"
+}
+
+cmd_ssh() {
+  local name=${1:?usage: vm ssh NAME [CMD...]} ip opts; shift
+  [ "${1:-}" = -- ] && shift
+  need_vm "$name"
+  ip=$(vm_ip "$name") || die "$name has no address (vm start $name; vm wait $name)"
+  mapfile -t opts < <(ssh_opts "$name")
+  if [ $# -eq 0 ] && [ -t 0 ]; then exec ssh "${opts[@]}" -o BatchMode=no "$(vm_user "$name")@$ip"; fi
+  exec ssh "${opts[@]}" "$(vm_user "$name")@$ip" "$@"
+}
+
+cmd_cp() {
+  [ $# -eq 2 ] || die "usage: vm cp SRC DST (guest side as NAME:PATH)"
+  local name="" a out=() ip opts
+  for a in "$@"; do
+    if [[ $a =~ ^([a-z0-9][a-z0-9-]*):(.*)$ ]]; then
+      [ -z "$name" ] || die "only one side can be a VM"
+      name=${BASH_REMATCH[1]}; need_vm "$name"
+      ip=$(vm_ip "$name") || die "$name has no address"
+      out+=("$(vm_user "$name")@$ip:${BASH_REMATCH[2]}")
+    else out+=("$a"); fi
+  done
+  [ -n "$name" ] || die "one side must be NAME:PATH"
+  mapfile -t opts < <(ssh_opts "$name")
+  exec scp -r -q "${opts[@]}" "${out[@]}"
+}
+
+cmd_list() {
+  local json=0 n st ip first=1; [ "${1:-}" = --json ] && json=1
+  ready
+  [ $json = 1 ] && printf '['
+  [ $json = 0 ] && printf '%-24s %-12s %-16s %s\n' NAME STATE ADDRESS MANAGED
+  while read -r n; do
+    [ -n "$n" ] || continue
+    st=$(state "$n"); ip=""
+    [ "$st" = running ] && ip=$(vm_ip "$n" || true)
+    if [ $json = 1 ]; then
+      [ $first = 1 ] || printf ','; first=0
+      printf '{"name":"%s","state":"%s","ip":"%s","user":"%s","managed":%s}' \
+        "$n" "$st" "$ip" "$(vm_user "$n")" "$(managed "$n" && echo true || echo false)"
+    else
+      printf '%-24s %-12s %-16s %s\n' "$n" "$st" "${ip:--}" "$(managed "$n" && echo yes || echo no)"
+    fi
+  done < <(virsh list --all --name)
+  [ $json = 1 ] && printf ']\n'
+  return 0
+}
+
+cmd_info() {
+  local name=${1:?usage: vm info NAME}; need_vm "$name"
+  virsh dominfo "$name" | grep -E '^(Name|State|CPU\(s\)|Max memory|Autostart)'
+  printf 'Address:        %s\n' "$(vm_ip "$name" || echo -)"
+  printf 'Login user:     %s\n' "$(vm_user "$name")"
+  printf 'Managed by vm:  %s\n' "$(managed "$name" && echo yes || echo no)"
+  virsh domblklist "$name" | awk 'NF==2 && $2!="-" {printf "Disk:           %s %s\n", $1, $2}'
+  printf 'Snapshots:      %s\n' "$(virsh snapshot-list "$name" --name 2>/dev/null | grep -c . || true)"
+}
+
+cmd_start() { need_vm "$1"; [ "$(state "$1")" = running ] && { say "$1 already running"; return; }; virsh start "$1" >/dev/null; say "$1 started"; }
+cmd_reboot() { need_vm "$1"; virsh reboot "$1" >/dev/null; say "$1 rebooting"; }
+cmd_stop() {
+  local name=${1:?usage: vm stop NAME [--force]}; need_vm "$name"
+  [ "$(state "$name")" = "shut off" ] && { say "$name already off"; return; }
+  if [ "${2:-}" = --force ]; then virsh destroy "$name" >/dev/null; say "$name powered off"; return; fi
+  virsh shutdown "$name" >/dev/null
+  local end=$((SECONDS + 90))
+  while [ "$(state "$name")" != "shut off" ]; do
+    [ $SECONDS -lt $end ] || die "$name ignored the shutdown request for 90s (vm stop $name --force)"
+    sleep 2
+  done
+  say "$name shut down"
+}
+
+cmd_snapshot() {
+  local name=${1:?usage: vm snapshot NAME [LABEL]} label=${2:-$(date +%Y%m%d-%H%M%S)}; need_vm "$name"
+  virsh snapshot-create-as "$name" "$label" --atomic >/dev/null
+  say "snapshot $label of $name taken"
+}
+cmd_snapshots() { need_vm "${1:?usage: vm snapshots NAME}"; virsh snapshot-list "$1"; }
+cmd_revert() {
+  local name=${1:?usage: vm revert NAME LABEL} label=${2:?usage: vm revert NAME LABEL}; need_vm "$name"
+  virsh snapshot-revert "$name" "$label" >/dev/null
+  say "$name reverted to $label"
+}
+
+cmd_delete() {
+  local name=${1:?usage: vm delete NAME [--force]}; need_vm "$name"
+  if ! managed "$name" && [ "${2:-}" != --force ]; then
+    die "$name was not created by vm; delete it with: vm delete $name --force"
+  fi
+  [ "$(state "$name")" = "shut off" ] || virsh destroy "$name" >/dev/null 2>&1 || true
+  # Only the VM's own disks: ISOs and the shared base images stay in the pool.
+  local disks
+  disks=$(virsh domblklist "$name" --details | awk '$1=="file" && $2=="disk" {print $4}' | paste -sd,)
+  virsh undefine "$name" --managed-save --snapshots-metadata --checkpoints-metadata --nvram \
+    ${disks:+--storage "$disks"} >/dev/null
+  rm -rf "${STATE:?}/$name"
+  say "$name deleted"
+}
+
+cmd_view() { need_vm "$1"; command -v virt-viewer >/dev/null || die "virt-viewer missing"; setsid -f virt-viewer --connect "$URI" --attach "$1" >/dev/null 2>&1; }
+cmd_console() { need_vm "$1"; exec command virsh -c "$URI" console "$1"; }
+
+usage() { awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0"; }
+
+cmd=${1:-help}; [ $# -gt 0 ] && shift
+case $cmd in
+  setup) cmd_setup ;;
+  doctor) cmd_doctor ;;
+  images) need_tools; cmd_images ;;
+  pull) ready; cmd_pull "${1:?usage: vm pull IMAGE}" >/dev/null ;;
+  create) cmd_create "$@" ;;
+  list | ls) cmd_list "$@" ;;
+  info) ready; cmd_info "$@" ;;
+  ip) ready; cmd_ip "${1:?usage: vm ip NAME}" ;;
+  wait) ready; cmd_wait "${1:?usage: vm wait NAME [SECONDS]}" "${2:-300}" ;;
+  ssh) ready; cmd_ssh "$@" ;;
+  cp) ready; cmd_cp "$@" ;;
+  start) ready; cmd_start "${1:?usage: vm start NAME}" ;;
+  stop) ready; cmd_stop "$@" ;;
+  reboot) ready; cmd_reboot "${1:?usage: vm reboot NAME}" ;;
+  snapshot) ready; cmd_snapshot "$@" ;;
+  snapshots) ready; cmd_snapshots "$@" ;;
+  revert) ready; cmd_revert "$@" ;;
+  delete | rm) ready; cmd_delete "$@" ;;
+  view) ready; cmd_view "${1:?usage: vm view NAME}" ;;
+  console) ready; cmd_console "${1:?usage: vm console NAME}" ;;
+  help | -h | --help) usage ;;
+  *) die "unknown command: $cmd (vm help)" ;;
+esac

@@ -1,4 +1,5 @@
 # Opt-in SYSTEM services for this host. Remove the # to select.
 # bluetooth
 # tailscale
+# libvirt
 # Deliberately no automatic activation; run dot services --apply after review.

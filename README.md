@@ -258,7 +258,7 @@ no virtual-machine test is required for merging.
 ### Optional system services belong to the host
 
 `hosts/<host>/services.txt` is an allowlisted manifest for optional system
-services; currently `bluetooth` and `tailscale` are supported. By default it is empty.
+services; currently `bluetooth`, `tailscale` and `libvirt` are supported. By default it is empty.
 No other host's preferences are copied or activated.
 
 ```sh
@@ -268,7 +268,7 @@ dot services --apply                            # enable/start the selected serv
 ```
 
 `dot services --apply` runs `systemctl enable --now` (authorized via polkit) for each selected unit
-(`bluetooth.service`, `tailscaled.service`) after checking its package and
+(`bluetooth.service`, `tailscaled.service`, `libvirtd.service`) after checking its package and
 unit exist. It is idempotent and never disables other services. Generic
 `dot install` reports service readiness but does not enable them. A host with
 no selected optional services needs no privileged system-service changes.
@@ -484,6 +484,28 @@ live sessions, review the diff and apply during a safe maintenance window.
 The command never silently activates *new links*, restarts services, or
 installs packages.
 
+## Virtual machines (optional)
+
+```sh
+dot optional virtualization   # KVM/QEMU, libvirt, virt-manager; then runs `vm setup`
+```
+
+`vm setup` (asks for sudo, idempotent) adds you to the `libvirt` group, enables
+libvirtd, starts the default NAT network and storage pool, lets the guests'
+DHCP/DNS and forwarding through ufw, and creates `~/.ssh/vm_ed25519` for
+logging into guests. Log out and back in afterwards (restart T3 Code too) so
+new processes get the group; `vm doctor` checks every step.
+
+`vm` (`~/.local/bin/vm`, `vm help`) is built for coding agents as much as for
+people: `vm create NAME --image debian-13` makes a cloud-init VM and waits until
+ssh works; `vm ssh NAME -- CMD`, `vm cp`, `vm snapshot`/`revert`, `vm list --json`
+and `vm delete` drive it with no prompts. The `vm` skill
+(`~/.claude/skills/vm`, `~/.codex/skills/vm`) tells Claude Code and Codex —
+including sessions started from T3 Code — when and how to use it, and to leave
+VMs it didn't create alone (`vm delete` refuses those without `--force`).
+`~/.config/libvirt/libvirt.conf` points plain `virsh`/`virt-install` at
+`qemu:///system`, the connection virt-manager shows.
+
 ## Layout
 
 ```
@@ -497,6 +519,7 @@ hosts/<hostname>/   this machine only:
 hosts/_template/    starting point for a new machine (`dot new-host`)
 packages/           common.txt (repo) and aur.txt (AUR) for every machine;
   optional/<group>.txt   opt-in apps ("# description" line, then packages; aur:<name> for AUR)
+  optional/<group>.setup optional one-time host setup run by `dot optional <group>`
 seed/               app-writable default configs (btop, waypaper, zed); not linked
 system/setup        read-only by default; --apply changes limited PAM/DDC settings
 scripts/            fetch-assets (downloads that don't belong in git)

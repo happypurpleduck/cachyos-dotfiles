@@ -1,0 +1,11 @@
+# Virtualization — KVM/QEMU + libvirt, virt-manager, and the `vm` CLI agents use to run VMs
+qemu-desktop
+libvirt
+dnsmasq
+edk2-ovmf
+swtpm
+virt-install
+virt-manager
+virt-viewer
+guestfs-tools
+openbsd-netcat

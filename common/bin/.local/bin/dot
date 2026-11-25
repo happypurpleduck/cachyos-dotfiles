@@ -287,6 +287,7 @@ pkglist() { grep -v -E '^\s*(#|$)' "$1" 2>/dev/null | awk '{print $1}' || true; 
 # packages/optional/<group>.txt: first line "# description", then packages
 # ("aur:<name>" for AUR). Each machine's answers live in hosts/<host>/optional.txt:
 # "<group>" = installed here, "!<group>" = declined (not asked again).
+# An executable packages/optional/<group>.setup runs after the group installs.
 OPTDIR=$DOT/packages/optional
 opt_groups() { [ -d "$OPTDIR" ] && (cd "$OPTDIR" && for f in *.txt; do [ -e "$f" ] && echo "${f%.txt}"; done) || true; }
 opt_desc() { sed -n '1s/^# *//p' "$OPTDIR/$1.txt"; }
@@ -339,6 +340,13 @@ cmd_optional() {
   [ ${#picked[@]} -gt 0 ] || { say "no optional groups to install"; return 0; }
   for g in "${picked[@]}"; do opt_record "$g" yes; done
   cmd_install_packages
+  # A group can ship packages/optional/<group>.setup for one-time host setup
+  # (groups, services, firewall) that packages alone don't do. Idempotent.
+  for g in "${picked[@]}"; do
+    [ -x "$OPTDIR/$g.setup" ] || continue
+    say "setting up $g"
+    DOT=$DOT HOST=$HOST "$OPTDIR/$g.setup" || warn "$g setup failed; rerun with dot optional $g"
+  done
 }
 
 cmd_packages() {

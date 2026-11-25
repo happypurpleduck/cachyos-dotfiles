@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Run by `dot optional virtualization` after the packages install. Idempotent.
+set -euo pipefail
+exec "$DOT/common/bin/.local/bin/vm" setup

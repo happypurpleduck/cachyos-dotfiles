@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Per-host optional SYSTEM services; read-only status and explicit activation.
 
-Currently supports Bluetooth and Tailscale. Never disables another machine's services
+Currently supports Bluetooth, Tailscale and libvirt. Never disables another machine's services
 or changes the system outside an explicit --apply action.
 """
 from __future__ import annotations
@@ -17,6 +17,7 @@ import sys
 ALLOWED = {
     "bluetooth": ("bluez", "bluetooth.service"),
     "tailscale": ("tailscale", "tailscaled.service"),
+    "libvirt": ("libvirt", "libvirtd.service"),
 }
 
 
