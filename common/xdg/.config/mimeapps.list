@@ -33,5 +33,7 @@ application/x-xz-compressed-tar=org.gnome.FileRoller.desktop
 application/zstd=org.gnome.FileRoller.desktop
 application/x-zstd-compressed-tar=org.gnome.FileRoller.desktop
 application/x-bzip2-compressed-tar=org.gnome.FileRoller.desktop
+x-scheme-handler/claude-cli=claude-code-url-handler.desktop
+x-scheme-handler/t3code=com.t3tools.T3Code.desktop
 
 [Added Associations]
