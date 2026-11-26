@@ -1,0 +1,4 @@
+# Docker — containers + compose/buildx (enable it via `docker` in services.txt + `dot services --apply`)
+docker
+docker-compose
+docker-buildx

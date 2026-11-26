@@ -289,7 +289,7 @@ pkglist() { grep -v -E '^\s*(#|$)' "$1" 2>/dev/null | awk '{print $1}' || true; 
 # "<group>" = installed here, "!<group>" = declined (not asked again).
 # An executable packages/optional/<group>.setup runs after the group installs.
 OPTDIR=$DOT/packages/optional
-opt_groups() { [ -d "$OPTDIR" ] && (cd "$OPTDIR" && for f in *.txt; do [ -e "$f" ] && echo "${f%.txt}"; done) || true; }
+opt_groups() { [ -d "$OPTDIR" ] && (cd "$OPTDIR" && for f in *.txt; do [ -e "$f" ] && echo "${f%.txt}"; done | LC_ALL=C sort) || true; }
 opt_desc() { sed -n '1s/^# *//p' "$OPTDIR/$1.txt"; }
 opt_chosen() { grep -v -E '^\s*(#|$|!)' "$HOSTDIR/optional.txt" 2>/dev/null | awk '{print $1}' || true; }
 opt_state() { # yes | no | (empty = not asked yet)

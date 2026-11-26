@@ -40,5 +40,5 @@ application-generated caches.
 Full multi-host test and recovery instructions: docs/verification.md.
 
 System services are separate from user services: edit this host's services.txt
-to select supported optional services (bluetooth, tailscale, libvirt), run dot services
+to select supported optional services (bluetooth, tailscale, libvirt, docker), run dot services
 to inspect readiness, then dot services --apply to enable them.

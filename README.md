@@ -258,7 +258,7 @@ no virtual-machine test is required for merging.
 ### Optional system services belong to the host
 
 `hosts/<host>/services.txt` is an allowlisted manifest for optional system
-services; currently `bluetooth`, `tailscale` and `libvirt` are supported. By default it is empty.
+services; currently `bluetooth`, `tailscale`, `libvirt` and `docker` are supported. By default it is empty.
 No other host's preferences are copied or activated.
 
 ```sh
@@ -268,7 +268,7 @@ dot services --apply                            # enable/start the selected serv
 ```
 
 `dot services --apply` runs `systemctl enable --now` (authorized via polkit) for each selected unit
-(`bluetooth.service`, `tailscaled.service`, `libvirtd.service`) after checking its package and
+(`bluetooth.service`, `tailscaled.service`, `libvirtd.service`, `docker.service`) after checking its package and
 unit exist. It is idempotent and never disables other services. Generic
 `dot install` reports service readiness but does not enable them. A host with
 no selected optional services needs no privileged system-service changes.

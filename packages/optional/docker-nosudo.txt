@@ -1,0 +1,2 @@
+# Docker without sudo — add you to the docker group (root-equivalent; re-login to apply)
+docker

@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Run by dot after the docker-nosudo group's packages are installed. Idempotent.
+# Membership of "docker" is root-equivalent; it takes effect on next login.
+set -euo pipefail
+user=$(id -un)
+getent group docker >/dev/null || { echo "docker group missing (is docker installed?)" >&2; exit 1; }
+if id -nG "$user" | tr ' ' '\n' | grep -qx docker; then
+  echo "docker-nosudo: $user already in the docker group"
+  exit 0
+fi
+# polkit rather than sudo, so this also works without a TTY.
+pkexec gpasswd -a "$user" docker
+echo "docker-nosudo: added $user to the docker group; log out and back in (or run: newgrp docker)"

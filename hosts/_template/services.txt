@@ -2,4 +2,5 @@
 # bluetooth
 # tailscale
 # libvirt
+# docker
 # Deliberately no automatic activation; run dot services --apply after review.
