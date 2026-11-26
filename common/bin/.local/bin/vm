@@ -99,8 +99,13 @@ ready() {
   [ -f "$KEY" ] || ssh-keygen -q -t ed25519 -N '' -C "vm@$(hostname)" -f "$KEY"
 }
 
+# After a kernel upgrade the running kernel's modules are gone until reboot, so
+# libvirt can't load bridge/tun and fails with "Package not installed".
+kernel_stale() { [ ! -d "/usr/lib/modules/$(uname -r)" ]; }
+
 cmd_setup() {
   need_tools
+  kernel_stale && die "the running kernel ($(uname -r)) was upgraded and its modules removed: reboot, then run vm setup again"
   local me; me=$(id -un)
   [ -e /dev/kvm ] || warn "/dev/kvm is missing: enable VT-x/AMD-V in the firmware, VMs will be very slow"
   if ! getent group libvirt | cut -d: -f4 | tr ',' '\n' | grep -qx "$me"; then
@@ -158,6 +163,7 @@ cmd_doctor() {
     command -v "$t" >/dev/null && ok "$t" || no "$t missing (dot optional virtualization)"
   done
   [ -w /dev/kvm ] && ok "/dev/kvm usable" || no "/dev/kvm not usable (firmware virtualization off?)"
+  kernel_stale && no "running kernel $(uname -r) has no modules on disk (upgraded: reboot)" || ok "kernel modules for $(uname -r) present"
   getent group libvirt | cut -d: -f4 | tr ',' '\n' | grep -qx "$me" && ok "$me in libvirt group" || no "$me not in libvirt group (vm setup)"
   id -nG | tr ' ' '\n' | grep -qx libvirt && ok "libvirt group active in this session" || no "libvirt group not active in this session (log in again)"
   systemctl is-active -q libvirtd.service && ok "libvirtd running" || no "libvirtd not running (vm setup)"
