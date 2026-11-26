@@ -354,7 +354,10 @@ def apply(repo: Path, home: Path, host: str, *, backup_conflicts=False,
                 os.replace(target, backup)
             if action["source"] is not None:
                 source = Path(action["source"])
-                if not source.is_file() or source.is_symlink():
+                # An in-repo symlink (e.g. .codex skills sharing the .claude
+                # copy) is fine as long as it resolves to a managed file.
+                if not source.is_file() or (source.is_symlink() and not
+                        safe_managed_source(source.resolve(), repo.resolve(), host)):
                     raise ValueError(f"source missing/unsafe before apply: {source}")
                 if action["operation"] == "seed":
                     if lexists(target):

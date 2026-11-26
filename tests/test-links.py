@@ -300,4 +300,24 @@ with tempfile.TemporaryDirectory() as tmp:
     assert "another host" in result.stderr
     assert (alien / ".zshrc").is_symlink()
 
+    # An in-repo symlink source (e.g. a .codex skill sharing the .claude copy)
+    # links; one resolving outside the managed tree is refused and rolled back.
+    shared = repo / "common/editor/.config/editor/alias.conf"
+    shared.symlink_to("settings.conf")
+    aliased = root / "aliased home"
+    aliased.mkdir()
+    invoke(aliased, "A")
+    assert (aliased / ".config/editor/alias.conf").resolve() == (repo / "common/editor/.config/editor/settings.conf").resolve()
+    outside = root / "outside.conf"
+    outside.write_text("not managed")
+    escape = repo / "common/editor/.config/editor/escape.conf"
+    escape.symlink_to(outside)
+    escaped = root / "escaped home"
+    escaped.mkdir()
+    result = invoke(escaped, "A", ok=False)
+    assert "unsafe" in result.stderr
+    assert not os.path.lexists(escaped / ".config/editor/escape.conf")
+    escape.unlink()
+    shared.unlink()
+
 print("two-host link, overrides, collision backups, unlink and rollback: OK")
