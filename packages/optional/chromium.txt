@@ -1,0 +1,2 @@
+# Chromium — open-source Chromium browser (alongside Google Chrome)
+chromium
