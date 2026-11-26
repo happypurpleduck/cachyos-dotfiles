@@ -9,6 +9,8 @@ BindsTo=pipewire.service
 
 [Service]
 Type=simple
+# Filter configs name data files relative to home (PipeWire doesn't expand ~).
+WorkingDirectory=%h
 ExecStart=/usr/bin/pipewire -c %i.conf
 Restart=on-failure
 RestartSec=2
