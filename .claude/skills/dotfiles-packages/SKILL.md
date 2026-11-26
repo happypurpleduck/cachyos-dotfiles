@@ -6,7 +6,12 @@ description: Package and service management in this dotfiles repo — common/hos
 # Packages, optional groups and services
 
 All installs go through **Shelly** (`shelly install standard|aur … --needed
---no-confirm`); the repo never calls pacman. `scripts/package-audit.py` builds
+--no-confirm`); the repo never calls pacman. When anything is missing,
+`--install` refreshes the package databases and installs repo packages with
+`--upgrade`, i.e. a full system upgrade in the same transaction (`pacman -Syu
+pkg…`). Never install against a refreshed database without upgrading: Arch
+doesn't support partial upgrades, and alpm refuses when new packages need newer
+libraries than installed ones pin. `scripts/package-audit.py` builds
 the plan and refuses anything outside the rules below.
 
 ## Where a package goes

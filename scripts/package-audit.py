@@ -123,10 +123,32 @@ def audit(repo: Path, host: str) -> dict:
 
 
 def install_command(shelly: str, kind: str, packages: list[str]) -> list[str]:
-    """Non-interactive Shelly install; Shelly elevates via pkexec/run0/sudo itself."""
+    """Non-interactive Shelly install; Shelly elevates via pkexec/run0/sudo itself.
+
+    Repository installs carry --upgrade: the system is upgraded in the same
+    transaction (pacman -Syu pkg…). Arch doesn't support partial upgrades: new
+    packages from a fresh database can need newer versions of libraries that
+    installed packages pin exactly (gstreamer=1.28.9-3), and alpm refuses.
+    """
     if kind not in ("standard", "aur"):
         raise ValueError(f"unsupported package type: {kind}")
-    return [shelly, "install", kind, "--needed", "--no-confirm", *packages]
+    upgrade = ["--upgrade"] if kind == "standard" else []
+    return [shelly, "install", kind, *upgrade, "--needed", "--no-confirm", *packages]
+
+
+def sync_command(shelly: str) -> list[str]:
+    """Refresh the ALPM package databases before deciding what to install.
+
+    A stale database asks mirrors for versions they have already deleted (a
+    mirror answering with an HTML page and HTTP 200 leaves a fake package in the
+    cache) and reports packages newer than it as unavailable.
+    """
+    return [shelly, "sync", "standard", "--no-confirm"]
+
+
+def upgrade_command(shelly: str) -> list[str]:
+    """Full repository upgrade, for when only AUR packages need installing."""
+    return [shelly, "upgrade", "standard", "--no-confirm"]
 
 
 def main() -> int:
@@ -139,6 +161,14 @@ def main() -> int:
     args = parser.parse_args()
     try:
         data = audit(args.repo.resolve(strict=True), args.host)
+        # Refresh only when there is something to install, so an up-to-date
+        # host never prompts for elevation; then re-audit, since a package that
+        # looked unavailable may just be newer than the stale database.
+        if args.install and data["shelly"] and (
+                data["missing_repo"] or data["missing_aur"]):
+            print("packages: refreshing package databases before installing", file=sys.stderr)
+            subprocess.run(sync_command(data["shelly"]), check=True)
+            data = audit(args.repo.resolve(strict=True), args.host)
         if args.json:
             print(json.dumps(data, indent=2))
         else:
@@ -159,6 +189,10 @@ def main() -> int:
             if data["missing_repo"]:
                 subprocess.run(install_command(data["shelly"], "standard",
                                                data["missing_repo"]), check=True)
+            elif data["missing_aur"]:
+                # AUR builds resolve their repo dependencies against the fresh
+                # database too, so bring the system up to it first.
+                subprocess.run(upgrade_command(data["shelly"]), check=True)
             if data["missing_aur"]:
                 subprocess.run(install_command(data["shelly"], "aur",
                                                data["missing_aur"]), check=True)

@@ -48,6 +48,12 @@ if args==["list","standard","--names-only"]:
     print(installed.read_text(),end="")
 elif args==["search","standard","--available","--names-only"]:
     print(available.read_text(),end="")
+elif args in (["sync","standard","--no-confirm"],["upgrade","standard","--no-confirm"]):
+    with Path(os.environ["MOCK_SHELLY_INVOCATIONS"]).open("a") as f:
+        f.write(" ".join(args)+"\n")
+    sync_adds=Path(os.environ["MOCK_SYNC_ADDS"])
+    if sync_adds.exists():
+        with available.open("a") as f: f.write(sync_adds.read_text())
 elif args[:1]==["install"] and args[1] in ("standard","aur"):
     with Path(os.environ["MOCK_SHELLY_INVOCATIONS"]).open("a") as f:
         f.write(" ".join(args)+"\n")
@@ -69,6 +75,7 @@ else:
         "MOCK_FORBIDDEN": str(forbidden),
         "MOCK_INSTALLED": str(installed),
         "MOCK_AVAILABLE": str(available),
+        "MOCK_SYNC_ADDS": str(root / "sync-adds"),
         # Only the mocks (plus git): the real shelly/pacman/sudo are unreachable.
         "PATH": str(binpath),
     }
@@ -93,8 +100,10 @@ else:
     assert "Shelly CLI: " in report and "shelly" in report
     # One non-interactive Shelly install per backend; no approval flags.
     audit("--install")
+    # The package databases are refreshed first, once, before any install.
     assert shelly_commands.read_text().splitlines() == [
-        "install standard --needed --no-confirm bat eza fd krita",
+        "sync standard --no-confirm",
+        "install standard --upgrade --needed --no-confirm bat eza fd krita",
         "install aur --needed --no-confirm google-chrome hokum-bin mock-aura",
     ]
     assert set(installed.read_text().split()) == {
@@ -102,6 +111,36 @@ else:
     }
     assert "repo missing: none" in audit().stdout
     assert not forbidden.exists(), forbidden.read_text()
+
+    # Nothing missing: no refresh, so an up-to-date host never asks for elevation.
+    shelly_commands.unlink()
+    audit("--install")
+    assert not shelly_commands.exists(), shelly_commands.read_text()
+
+    # A package only in the refreshed database installs instead of blocking.
+    saved_installed, saved_available = installed.read_text(), available.read_text()
+    (repo / "hosts/A/packages.txt").write_text("newpkg\n")
+    (root / "sync-adds").write_text("newpkg\n")
+    assert "repo unavailable: newpkg" in audit(ok=False).stdout
+    audit("--install")
+    assert shelly_commands.read_text().splitlines() == [
+        "sync standard --no-confirm",
+        "install standard --upgrade --needed --no-confirm newpkg",
+    ]
+    (repo / "hosts/A/packages.txt").unlink()
+    (root / "sync-adds").unlink()
+
+    # Only AUR packages missing: upgrade the repo system first, then build.
+    shelly_commands.unlink()
+    installed.write_text(saved_installed.replace("mock-aura\n", ""))
+    audit("--install")
+    assert shelly_commands.read_text().splitlines() == [
+        "sync standard --no-confirm",
+        "upgrade standard --no-confirm",
+        "install aur --needed --no-confirm mock-aura",
+    ]
+    installed.write_text(saved_installed); available.write_text(saved_available)
+    shelly_commands.unlink()
 
     # Without Shelly nothing can be queried or installed.
     installed.write_text("git\n")
