@@ -8,6 +8,11 @@ if id -nG "$user" | tr ' ' '\n' | grep -qx docker; then
   echo "docker-nosudo: $user already in the docker group"
   exit 0
 fi
-# polkit rather than sudo, so this also works without a TTY.
-pkexec gpasswd -a "$user" docker
+# sudo when there is a terminal to ask in (like `vm setup`); pkexec otherwise.
+# pkexec from a process outside the logind session is refused outright.
+if { : </dev/tty; } 2>/dev/null; then
+  sudo gpasswd -a "$user" docker
+else
+  pkexec gpasswd -a "$user" docker
+fi
 echo "docker-nosudo: added $user to the docker group; log out and back in (or run: newgrp docker)"
