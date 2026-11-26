@@ -34,7 +34,8 @@ Ryzen + RTX 4070 Ti) and `husain-parcel`; `cat /etc/hostname` says which.
 | `~/.t3/bin/t3` (not on PATH) | T3 Code CLI: start and read agent threads (see the `t3code` skill) |
 
 Also present: Tailscale (`tailscale status`), Google Chrome, ripgrep, fd, eza, bat,
-fzf, jq, lazygit, tmux. Docker and Podman are **not** installed: use `vm` for isolation.
+fzf, jq, lazygit, tmux. Docker is an optional group (`dot optional docker`), so check `command -v docker`
+before relying on it; Podman is not installed. Prefer `vm` for isolation.
 
 ## Configuration is managed — don't edit it in place
 

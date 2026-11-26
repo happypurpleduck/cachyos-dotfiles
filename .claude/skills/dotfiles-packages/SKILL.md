@@ -53,7 +53,7 @@ logic in a tool the user can rerun — `virtualization.setup` just runs `vm setu
 
 `hosts/<host>/services.txt` selects services from the allowlist `ALLOWED` in
 `scripts/host-services.py` (name → package, unit): currently bluetooth,
-tailscale and libvirt. `dot services` is a read-only report; `dot services
+tailscale, libvirt and docker. `dot services` is a read-only report; `dot services
 --apply` runs `systemctl enable --now` via polkit. To support a new service, add
 it to `ALLOWED`, list it commented-out in `hosts/_template/services.txt`, update
 the README's services section and run `tests/test-host-services.py`.
