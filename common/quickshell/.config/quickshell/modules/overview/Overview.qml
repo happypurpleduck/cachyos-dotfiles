@@ -63,7 +63,9 @@ OverlayWindow {
                 required property int index
                 readonly property int wsId: index + 1
                 readonly property bool isActive: wsId === win.activeWs
-                readonly property var windows: Hyprland.toplevels.values.filter(t => t.workspace?.id === cell.wsId && t.lastIpcObject?.at)
+                // Only track windows while shown: otherwise every Hyprland toplevel refresh
+                // (each focus change) rebuilds the hidden tiles and reloads their icons.
+                readonly property var windows: win.visible ? Hyprland.toplevels.values.filter(t => t.workspace?.id === cell.wsId && t.lastIpcObject?.at) : []
 
                 Layout.preferredWidth: win.cellW
                 Layout.preferredHeight: win.cellH
